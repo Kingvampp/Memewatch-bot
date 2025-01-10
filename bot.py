@@ -7,7 +7,6 @@ import json
 from datetime import datetime, timedelta
 import time
 import re
-from quickchart import QuickChart
 
 # Load environment variables
 load_dotenv()
@@ -18,95 +17,11 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='$', intents=intents)
 
-def create_price_chart(prices, created_at):
-    try:
-        # Calculate time intervals based on token age
-        now = datetime.utcnow()
-        token_age = now - created_at
-        
-        # Filter and sample data points based on age
-        if token_age < timedelta(hours=1):
-            # Under 1 hour: 1-minute intervals
-            interval = 60  # 1 minute in seconds
-            label_format = 'HH:mm'
-        elif token_age < timedelta(hours=5):
-            # 1-5 hours: 5-minute intervals
-            interval = 300  # 5 minutes in seconds
-            label_format = 'HH:mm'
-        elif token_age < timedelta(hours=24):
-            # 5-24 hours: 15-minute intervals
-            interval = 900  # 15 minutes in seconds
-            label_format = 'HH:mm'
-        else:
-            # Over 24 hours: 1-hour intervals
-            interval = 3600  # 1 hour in seconds
-            label_format = 'MM/DD HH:mm'
-
-        # Process price data
-        times = []
-        price_values = []
-        last_timestamp = 0
-        
-        for price in reversed(prices):  # Newest first
-            timestamp = price['timestamp'] // 1000  # Convert to seconds
-            if timestamp - last_timestamp >= interval:
-                times.append(datetime.fromtimestamp(timestamp).strftime(label_format))
-                price_values.append(float(price['price']))
-                last_timestamp = timestamp
-
-        # Create QuickChart configuration
-        chart = QuickChart()
-        chart.width = 400
-        chart.height = 200
-        chart.background_color = '#2f3136'
-        
-        chart.config = {
-            'type': 'line',
-            'data': {
-                'labels': times[::-1],  # Reverse to show oldest to newest
-                'datasets': [{
-                    'label': 'Price',
-                    'data': price_values[::-1],
-                    'fill': False,
-                    'borderColor': '#00ff00',
-                    'tension': 0.1
-                }]
-            },
-            'options': {
-                'scales': {
-                    'y': {
-                        'ticks': {
-                            'color': '#ffffff'
-                        },
-                        'grid': {
-                            'color': '#666666',
-                            'alpha': 0.2
-                        }
-                    },
-                    'x': {
-                        'ticks': {
-                            'color': '#ffffff',
-                            'maxRotation': 45,
-                            'minRotation': 45
-                        },
-                        'grid': {
-                            'color': '#666666',
-                            'alpha': 0.2
-                        }
-                    }
-                },
-                'plugins': {
-                    'legend': {
-                        'display': False
-                    }
-                }
-            }
-        }
-        
-        return chart.get_url()
-    except Exception as e:
-        print(f"Error creating chart: {str(e)}")
-        return None
+def get_chart_url(chain, contract, pair_address):
+    if chain == 'solana':
+        return f"https://birdeye.so/token/{contract}"
+    else:
+        return f"https://dexscreener.com/chart/{pair_address}"
 
 def is_contract_address(text):
     # ETH address pattern
@@ -146,6 +61,7 @@ def get_token_info(query):
         token_symbol = pair.get('baseToken', {}).get('symbol', '???')
         chain = pair.get('chainId', 'unknown')
         contract = pair.get('baseToken', {}).get('address', '')
+        pair_address = pair.get('pairAddress', '')
 
         embed = discord.Embed(
             title=f"{token_name} ({token_symbol})",
@@ -215,11 +131,11 @@ def get_token_info(query):
         if links:
             embed.add_field(name="🔗 Links", value=" | ".join(links), inline=False)
 
-        # Add price chart if creation time is available
-        if created_at and pair.get('priceHistory'):
-            chart_url = create_price_chart(pair['priceHistory'], created_at)
+        # Add chart image
+        if created_at and pair_address:
+            chart_url = get_chart_url(chain, contract, pair_address)
             if chart_url:
-                embed.set_thumbnail(url=chart_url)
+                embed.set_image(url=chart_url)
 
         # Add footer
         embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")

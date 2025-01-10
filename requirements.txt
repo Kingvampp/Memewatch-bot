@@ -7,5 +7,4 @@ charset-normalizer==3.3.2
 idna==3.6
 multidict==6.0.4
 urllib3==2.1.0
-yarl==1.9.4
-quickchart-python==1.0.0 
+yarl==1.9.4 
