@@ -29,9 +29,13 @@ def create_price_chart(prices, created_at):
             # Under 1 hour: 1-minute intervals
             interval = 60  # 1 minute in seconds
             label_format = 'HH:mm'
+        elif token_age < timedelta(hours=5):
+            # 1-5 hours: 5-minute intervals
+            interval = 300  # 5 minutes in seconds
+            label_format = 'HH:mm'
         elif token_age < timedelta(hours=24):
-            # Under 24 hours: 30-minute intervals
-            interval = 1800  # 30 minutes in seconds
+            # 5-24 hours: 15-minute intervals
+            interval = 900  # 15 minutes in seconds
             label_format = 'HH:mm'
         else:
             # Over 24 hours: 1-hour intervals
