@@ -17,13 +17,10 @@ DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True
 intents.messages = True
-intents.guild_messages = True
-intents.message_attachments = True
 
 bot = commands.Bot(
     command_prefix='$',
-    intents=intents,
-    allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True)
+    intents=intents
 )
 
 def create_price_chart(prices, created_at):
@@ -46,41 +43,35 @@ def create_price_chart(prices, created_at):
             interval = 3600  # 1 hour
             title = "1h"
 
-        # Process price data
+        # Process price data (limit to 20 points max)
         times = []
         prices_list = []
         last_timestamp = 0
+        count = 0
         
         for price in reversed(prices):  # Newest first
+            if count >= 20:  # Limit to 20 data points
+                break
             timestamp = price['timestamp'] // 1000
             if timestamp - last_timestamp >= interval:
                 times.append(datetime.fromtimestamp(timestamp).strftime('%H:%M'))
                 prices_list.append(float(price['price']))
                 last_timestamp = timestamp
+                count += 1
 
         # Determine color based on price direction
         color = '00ff00' if prices_list[-1] >= prices_list[0] else 'ff0000'
 
         # Create minimal chart config
         config = {
-            "type": "line",
-            "data": {
+            "type":"line",
+            "data":{
                 "labels": times[::-1],
-                "datasets": [{
+                "datasets":[{
                     "data": prices_list[::-1],
                     "borderColor": f"#{color}",
-                    "borderWidth": 2,
-                    "fill": False,
-                    "pointRadius": 0
+                    "fill":False
                 }]
-            },
-            "options": {
-                "title": {"text": title},
-                "legend": {"display": False},
-                "scales": {
-                    "yAxes": [{"ticks": {"maxTicksLimit": 8}}],
-                    "xAxes": [{"ticks": {"maxTicksLimit": 8}}]
-                }
             }
         }
 
@@ -88,7 +79,7 @@ def create_price_chart(prices, created_at):
         config_str = base64.urlsafe_b64encode(json.dumps(config).encode()).decode()
         
         # Return shorter URL
-        return f"https://quickchart.io/chart?c={config_str}&bkg=rgb(47,49,54)&w=800&h=400"
+        return f"https://quickchart.io/chart?c={config_str}&w=800&h=400&bkg=2f3136"
         
     except Exception as e:
         print(f"Error creating chart: {str(e)}")
