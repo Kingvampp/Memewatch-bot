@@ -94,22 +94,12 @@ def get_token_info(query):
                 f"[📊 Pump.fun](https://pump.fun/token/{contract})",
                 f"[🐂 BullX](https://bullx.io/token/{contract})",
                 f"[🤖 BonkBot](https://t.me/BonkBot)",
-                f"[📱 Photon](https://photon.rs/token/{contract})",
-                f"[🔄 Jupiter](https://jup.ag/swap/SOL-{contract})"
+                f"[📱 Photon](https://photon.rs/token/{contract})"
             ])
         elif chain == 'solana':
             links.extend([
                 f"[🔍 DEXScreener](https://dexscreener.com/solana/{contract})",
                 f"[👁️ Birdeye](https://birdeye.so/token/{contract})",
-                f"[🐂 BullX](https://bullx.io/token/{contract})",
-                f"[🤖 BonkBot](https://t.me/BonkBot)",
-                f"[📱 Photon](https://photon.rs/token/{contract})",
-                f"[🔄 Jupiter](https://jup.ag/swap/SOL-{contract})"
-            ])
-        elif chain == 'bsc':
-            links.extend([
-                f"[🔍 DEXScreener](https://dexscreener.com/bsc/{contract})",
-                f"[💩 PooCoin](https://poocoin.app/tokens/{contract})",
                 f"[🐂 BullX](https://bullx.io/token/{contract})",
                 f"[🤖 BonkBot](https://t.me/BonkBot)",
                 f"[📱 Photon](https://photon.rs/token/{contract})",
