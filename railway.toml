@@ -3,8 +3,5 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "python bot.py"
-healthcheckPath = "/"
-healthcheckTimeout = 100
-
-[deploy.buildCommand]
-value = "apt-get update && apt-get install -y python3-tk" 
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10 

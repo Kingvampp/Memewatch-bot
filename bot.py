@@ -6,9 +6,6 @@ from dotenv import load_dotenv
 import json
 from datetime import datetime, timedelta
 import time
-import matplotlib.pyplot as plt
-import io
-import matplotlib.dates as mdates
 
 # Load environment variables
 load_dotenv()
@@ -18,78 +15,6 @@ DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='$', intents=intents)
-
-def create_price_chart(pair_address, chain, created_at):
-    try:
-        # Get price history from DEXScreener
-        url = f"https://api.dexscreener.com/latest/dex/pairs/{chain}/{pair_address}"
-        response = requests.get(url)
-        data = response.json()
-        
-        if not data.get('pair'):
-            return None
-            
-        # Calculate time intervals based on token age
-        now = datetime.utcnow()
-        token_age = now - created_at
-        
-        if token_age < timedelta(hours=1):
-            # Under 1 hour: 1-minute intervals
-            interval = timedelta(minutes=1)
-            format_str = '%H:%M'
-        elif token_age < timedelta(hours=24):
-            # Under 24 hours: 30-minute intervals
-            interval = timedelta(minutes=30)
-            format_str = '%H:%M'
-        else:
-            # Over 24 hours: 1-hour intervals
-            interval = timedelta(hours=1)
-            format_str = '%m/%d %H:%M'
-
-        # Create price chart
-        plt.figure(figsize=(8, 4))
-        plt.style.use('dark_background')
-        
-        # Get price data
-        prices = data['pair'].get('priceHistory', [])
-        if not prices:
-            return None
-            
-        # Convert timestamps to datetime
-        times = [datetime.fromtimestamp(p['timestamp']/1000) for p in prices]
-        price_values = [float(p['price']) for p in prices]
-        
-        # Plot the line
-        plt.plot(times, price_values, color='#00ff00', linewidth=2)
-        
-        # Format the plot
-        plt.gca().spines['top'].set_visible(False)
-        plt.gca().spines['right'].set_visible(False)
-        plt.gca().spines['bottom'].set_color('#666666')
-        plt.gca().spines['left'].set_color('#666666')
-        
-        # Format x-axis
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter(format_str))
-        plt.xticks(rotation=45)
-        
-        # Format y-axis to use scientific notation for small numbers
-        plt.gca().yaxis.set_major_formatter(plt.ScalarFormatter(useMathText=True))
-        plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
-        
-        # Adjust layout and grid
-        plt.grid(True, alpha=0.2)
-        plt.tight_layout()
-        
-        # Save to bytes
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-        buf.seek(0)
-        plt.close()
-        
-        return buf
-    except Exception as e:
-        print(f"Error creating chart: {str(e)}")
-        return None
 
 def get_token_info(query):
     try:
@@ -104,7 +29,7 @@ def get_token_info(query):
         dex_data = dex_response.json()
 
         if not dex_data.get('pairs') or len(dex_data['pairs']) == 0:
-            return f"Token '{query}' not found on DEXScreener."
+            return f"Token '{query}' not found on DEXScreener.", None
 
         # Get the first pair with good liquidity
         pair = None
@@ -121,7 +46,6 @@ def get_token_info(query):
         token_symbol = pair.get('baseToken', {}).get('symbol', '???')
         chain = pair.get('chainId', 'unknown')
         contract = pair.get('baseToken', {}).get('address', '')
-        pair_address = pair.get('pairAddress', '')
 
         embed = discord.Embed(
             title=f"{token_name} ({token_symbol})",
@@ -153,7 +77,6 @@ def get_token_info(query):
         embed.add_field(name="📊 24h Volume", value=f"${volume:,.2f}", inline=True)
 
         # Get creation time and add age
-        created_at = None
         if pair.get('pairCreatedAt'):
             created_at = datetime.fromtimestamp(int(pair['pairCreatedAt'])/1000)
             days_old = (datetime.utcnow() - created_at).days
@@ -191,13 +114,13 @@ def get_token_info(query):
         if links:
             embed.add_field(name="🔗 Links", value=" | ".join(links), inline=False)
 
-        # Add price chart if creation time is available
-        if created_at and pair_address:
-            chart_buf = create_price_chart(pair_address, chain, created_at)
-            if chart_buf:
-                chart_file = discord.File(chart_buf, filename="chart.png")
-                embed.set_image(url="attachment://chart.png")
-                return embed, chart_file
+        # Add chart link
+        if chain in ['eth', 'ethereum']:
+            chart_url = f"https://dexscreener.com/ethereum/{contract}"
+            embed.add_field(name="📈 Live Chart", value=f"[View on DEXScreener]({chart_url})", inline=False)
+        elif chain == 'solana':
+            chart_url = f"https://birdeye.so/token/{contract}"
+            embed.add_field(name="📈 Live Chart", value=f"[View on Birdeye]({chart_url})", inline=False)
 
         # Add footer
         embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")
@@ -220,14 +143,11 @@ async def on_message(message):
         query = message.content[1:].strip()  # Remove $ and any whitespace
         if query:
             async with message.channel.typing():
-                response, chart = get_token_info(query)
+                response, _ = get_token_info(query)
                 if isinstance(response, str):
                     await message.channel.send(response)
                 else:
-                    if chart:
-                        await message.channel.send(embed=response, file=chart)
-                    else:
-                        await message.channel.send(embed=response)
+                    await message.channel.send(embed=response)
         else:
             await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `$0x...`")
 
