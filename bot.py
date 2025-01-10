@@ -7,6 +7,9 @@ import json
 from datetime import datetime, timedelta
 import time
 import re
+import plotly.graph_objects as go
+import io
+import base64
 
 # Load environment variables
 load_dotenv()
@@ -17,11 +20,93 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='$', intents=intents)
 
-def get_chart_url(chain, contract, pair_address):
-    if chain == 'solana':
-        return f"https://birdeye.so/token/{contract}"
-    else:
-        return f"https://dexscreener.com/chart/{pair_address}"
+def create_price_chart(prices, created_at):
+    try:
+        # Calculate time intervals based on token age
+        now = datetime.utcnow()
+        token_age = now - created_at
+        
+        # Filter and sample data points based on age
+        if token_age < timedelta(hours=1):
+            # Under 1 hour: 1-minute intervals
+            interval = 60  # 1 minute in seconds
+            title_text = "1 Minute Chart"
+        elif token_age < timedelta(hours=5):
+            # 1-5 hours: 5-minute intervals
+            interval = 300  # 5 minutes in seconds
+            title_text = "5 Minute Chart"
+        elif token_age < timedelta(hours=24):
+            # 5-24 hours: 15-minute intervals
+            interval = 900  # 15 minutes in seconds
+            title_text = "15 Minute Chart"
+        else:
+            # Over 24 hours: 1-hour intervals
+            interval = 3600  # 1 hour in seconds
+            title_text = "1 Hour Chart"
+
+        # Process price data
+        times = []
+        price_values = []
+        last_timestamp = 0
+        
+        for price in reversed(prices):  # Newest first
+            timestamp = price['timestamp'] // 1000  # Convert to seconds
+            if timestamp - last_timestamp >= interval:
+                times.append(datetime.fromtimestamp(timestamp))
+                price_values.append(float(price['price']))
+                last_timestamp = timestamp
+
+        # Create plotly figure
+        fig = go.Figure()
+        
+        # Add price line
+        fig.add_trace(go.Scatter(
+            x=times,
+            y=price_values,
+            mode='lines',
+            line=dict(color='#00ff00', width=2),
+            name='Price'
+        ))
+
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=title_text,
+                x=0.5,
+                xanchor='center',
+                font=dict(color='white')
+            ),
+            plot_bgcolor='#2f3136',
+            paper_bgcolor='#2f3136',
+            xaxis=dict(
+                showgrid=True,
+                gridcolor='#666666',
+                gridwidth=0.5,
+                tickfont=dict(color='white'),
+                title_font=dict(color='white')
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor='#666666',
+                gridwidth=0.5,
+                tickfont=dict(color='white'),
+                title_font=dict(color='white'),
+                tickformat='.8f'
+            ),
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=50),
+            width=800,
+            height=400
+        )
+
+        # Save to bytes
+        img_bytes = fig.to_image(format="png")
+        
+        # Convert to base64 for Discord
+        return f"data:image/png;base64,{base64.b64encode(img_bytes).decode()}"
+    except Exception as e:
+        print(f"Error creating chart: {str(e)}")
+        return None
 
 def is_contract_address(text):
     # ETH address pattern
@@ -61,7 +146,6 @@ def get_token_info(query):
         token_symbol = pair.get('baseToken', {}).get('symbol', '???')
         chain = pair.get('chainId', 'unknown')
         contract = pair.get('baseToken', {}).get('address', '')
-        pair_address = pair.get('pairAddress', '')
 
         embed = discord.Embed(
             title=f"{token_name} ({token_symbol})",
@@ -131,9 +215,9 @@ def get_token_info(query):
         if links:
             embed.add_field(name="🔗 Links", value=" | ".join(links), inline=False)
 
-        # Add chart image
-        if created_at and pair_address:
-            chart_url = get_chart_url(chain, contract, pair_address)
+        # Add price chart if creation time is available
+        if created_at and pair.get('priceHistory'):
+            chart_url = create_price_chart(pair['priceHistory'], created_at)
             if chart_url:
                 embed.set_image(url=chart_url)
 
