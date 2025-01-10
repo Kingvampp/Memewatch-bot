@@ -102,11 +102,10 @@ def create_price_chart(prices, created_at):
             height=400
         )
 
-        # Save to bytes
-        img_bytes = fig.to_image(format="png")
-        
-        # Convert to base64 for Discord
-        return f"data:image/png;base64,{base64.b64encode(img_bytes).decode()}"
+        # Save to temporary file
+        temp_file = f"chart_{int(time.time())}.png"
+        fig.write_image(temp_file)
+        return temp_file
     except Exception as e:
         print(f"Error creating chart: {str(e)}")
         return None
@@ -219,15 +218,17 @@ def get_token_info(query):
             embed.add_field(name="🔗 Links", value=" | ".join(links), inline=False)
 
         # Add price chart if creation time is available
+        chart_file = None
         if created_at and pair.get('priceHistory'):
-            chart_url = create_price_chart(pair['priceHistory'], created_at)
-            if chart_url:
-                embed.set_image(url=chart_url)
+            chart_path = create_price_chart(pair['priceHistory'], created_at)
+            if chart_path:
+                chart_file = discord.File(chart_path, filename="chart.png")
+                embed.set_image(url="attachment://chart.png")
 
         # Add footer
         embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")
         
-        return embed, None
+        return embed, chart_file
         
     except requests.exceptions.RequestException as e:
         return f"Network error while fetching token information. Please try again.", None
@@ -248,11 +249,19 @@ async def on_message(message):
         query = content[1:] if content.startswith('$') else content
         if query:
             async with message.channel.typing():
-                response, _ = get_token_info(query)
+                response, chart_file = get_token_info(query)
                 if isinstance(response, str):
                     await message.channel.send(response)
                 else:
-                    await message.channel.send(embed=response)
+                    if chart_file:
+                        await message.channel.send(embed=response, file=chart_file)
+                        # Clean up temporary file
+                        try:
+                            os.remove(chart_file.filename)
+                        except:
+                            pass
+                    else:
+                        await message.channel.send(embed=response)
         else:
             await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `0x...`")
 
