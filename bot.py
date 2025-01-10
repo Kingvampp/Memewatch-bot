@@ -34,96 +34,61 @@ def create_price_chart(prices, created_at):
         
         # Filter and sample data points based on age
         if token_age < timedelta(hours=1):
-            # Under 1 hour: 1-minute intervals
-            interval = 60  # 1 minute in seconds
-            title_text = "1 Minute Chart"
+            interval = 60  # 1 minute
+            title = "1m"
         elif token_age < timedelta(hours=5):
-            # 1-5 hours: 5-minute intervals
-            interval = 300  # 5 minutes in seconds
-            title_text = "5 Minute Chart"
+            interval = 300  # 5 minutes
+            title = "5m"
         elif token_age < timedelta(hours=24):
-            # 5-24 hours: 15-minute intervals
-            interval = 900  # 15 minutes in seconds
-            title_text = "15 Minute Chart"
+            interval = 900  # 15 minutes
+            title = "15m"
         else:
-            # Over 24 hours: 1-hour intervals
-            interval = 3600  # 1 hour in seconds
-            title_text = "1 Hour Chart"
+            interval = 3600  # 1 hour
+            title = "1h"
 
         # Process price data
         times = []
-        price_values = []
+        prices_list = []
         last_timestamp = 0
         
         for price in reversed(prices):  # Newest first
-            timestamp = price['timestamp'] // 1000  # Convert to seconds
+            timestamp = price['timestamp'] // 1000
             if timestamp - last_timestamp >= interval:
                 times.append(datetime.fromtimestamp(timestamp).strftime('%H:%M'))
-                price_values.append(float(price['price']))
+                prices_list.append(float(price['price']))
                 last_timestamp = timestamp
 
-        # Determine if price is up or down
-        line_color = 'rgb(0,255,0)' if price_values[-1] >= price_values[0] else 'rgb(255,0,0)'
+        # Determine color based on price direction
+        color = '00ff00' if prices_list[-1] >= prices_list[0] else 'ff0000'
 
-        # Create QuickChart configuration
-        chart_config = {
+        # Create minimal chart config
+        config = {
             "type": "line",
             "data": {
                 "labels": times[::-1],
                 "datasets": [{
-                    "data": price_values[::-1],
-                    "fill": False,
-                    "borderColor": line_color,
-                    "tension": 0.1,
+                    "data": prices_list[::-1],
+                    "borderColor": f"#{color}",
                     "borderWidth": 2,
+                    "fill": False,
                     "pointRadius": 0
                 }]
             },
             "options": {
-                "title": {
-                    "display": True,
-                    "text": title_text,
-                    "fontColor": "white",
-                    "fontSize": 16
-                },
-                "legend": {
-                    "display": False
-                },
+                "title": {"text": title},
+                "legend": {"display": False},
                 "scales": {
-                    "yAxes": [{
-                        "ticks": {
-                            "fontColor": "white",
-                            "maxTicksLimit": 8,
-                            "callback": "function(value) { return value.toFixed(8); }"
-                        },
-                        "gridLines": {
-                            "color": "rgba(100,100,100,0.2)",
-                            "zeroLineColor": "rgba(100,100,100,0.2)"
-                        }
-                    }],
-                    "xAxes": [{
-                        "ticks": {
-                            "fontColor": "white",
-                            "maxTicksLimit": 8
-                        },
-                        "gridLines": {
-                            "color": "rgba(100,100,100,0.2)",
-                            "zeroLineColor": "rgba(100,100,100,0.2)"
-                        }
-                    }]
-                },
-                "plugins": {
-                    "backgroundImageUrl": "https://quickchart.io/images/dark-background.png"
+                    "yAxes": [{"ticks": {"maxTicksLimit": 8}}],
+                    "xAxes": [{"ticks": {"maxTicksLimit": 8}}]
                 }
             }
         }
 
-        # Convert to URL-safe JSON
-        chart_json = json.dumps(chart_config)
-        chart_json_b64 = base64.b64encode(chart_json.encode()).decode()
+        # Convert to URL-safe base64
+        config_str = base64.urlsafe_b64encode(json.dumps(config).encode()).decode()
         
-        # Return the QuickChart URL
-        return f"https://quickchart.io/chart?c={chart_json_b64}&backgroundColor=rgb(47,49,54)&width=800&height=400"
+        # Return shorter URL
+        return f"https://quickchart.io/chart?c={config_str}&bkg=rgb(47,49,54)&w=800&h=400"
         
     except Exception as e:
         print(f"Error creating chart: {str(e)}")
