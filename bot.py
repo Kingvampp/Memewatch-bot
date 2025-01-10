@@ -56,6 +56,9 @@ def create_price_chart(prices, created_at):
                 price_values.append(float(price['price']))
                 last_timestamp = timestamp
 
+        # Determine if price is up or down
+        line_color = '#00ff00' if price_values[-1] >= price_values[0] else '#ff0000'
+
         # Create plotly figure
         fig = go.Figure()
         
@@ -64,7 +67,7 @@ def create_price_chart(prices, created_at):
             x=times,
             y=price_values,
             mode='lines',
-            line=dict(color='#00ff00', width=2),
+            line=dict(color=line_color, width=2),
             name='Price'
         ))
 
