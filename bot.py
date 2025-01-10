@@ -92,8 +92,7 @@ def get_token_info(query):
             links.extend([
                 f"[🔍 DEXScreener](https://dexscreener.com/ethereum/{contract})",
                 f"[🐂 BullX](https://bullx.io/token/{contract})",
-                f"[📱 Photon](https://photon.rs/token/{contract})",
-                f"[🤖 BonkBot](https://t.me/BonkBot)"
+                f"[📱 Photon](https://photon.rs/token/{contract})"
             ])
         elif chain == 'solana':
             links.extend([
