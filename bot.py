@@ -91,18 +91,18 @@ def get_token_info(query):
         if chain in ['eth', 'ethereum']:
             links.extend([
                 f"[🔍 DEXScreener](https://dexscreener.com/ethereum/{contract})",
-                f"[📊 Pump.fun](https://pump.fun/token/{contract})",
                 f"[🐂 BullX](https://bullx.io/token/{contract})",
-                f"[🤖 BonkBot](https://t.me/BonkBot)",
-                f"[📱 Photon](https://photon.rs/token/{contract})"
+                f"[📱 Photon](https://photon.rs/token/{contract})",
+                f"[🤖 BonkBot](https://t.me/BonkBot)"
             ])
         elif chain == 'solana':
             links.extend([
                 f"[🔍 DEXScreener](https://dexscreener.com/solana/{contract})",
                 f"[👁️ Birdeye](https://birdeye.so/token/{contract})",
+                f"[📊 Pump.fun](https://pump.fun/token/{contract})",
                 f"[🐂 BullX](https://bullx.io/token/{contract})",
-                f"[🤖 BonkBot](https://t.me/BonkBot)",
                 f"[📱 Photon](https://photon.rs/token/{contract})",
+                f"[🤖 BonkBot](https://t.me/BonkBot)",
                 f"[🔄 Jupiter](https://jup.ag/swap/SOL-{contract})"
             ])
 
