@@ -23,151 +23,104 @@ def get_token_info(query):
             'accept': 'application/json'
         }
 
-        # Search for token info
-        search_url = f"https://api.coingecko.com/api/v3/search?query={query}"
-        search_response = requests.get(search_url, headers=headers)
+        # First try DEXScreener API
+        dex_url = f"https://api.dexscreener.com/latest/dex/search?q={query}"
+        dex_response = requests.get(dex_url, headers=headers)
+        dex_data = dex_response.json()
+
+        if not dex_data.get('pairs') or len(dex_data['pairs']) == 0:
+            return f"Token '{query}' not found on DEXScreener."
+
+        # Get the first pair with good liquidity
+        pair = None
+        for p in dex_data['pairs']:
+            if float(p.get('liquidity', {}).get('usd', 0)) > 1000:  # Min $1000 liquidity
+                pair = p
+                break
         
-        if search_response.status_code == 429:
-            return "Rate limit reached. Please try again in a minute."
-        
-        search_data = search_response.json()
-        
-        if not search_data.get('coins'):
-            return f"Token '{query}' not found on CoinGecko."
-            
-        coin = search_data['coins'][0]
-        coin_id = coin['id']
-        
-        # Get detailed token info
-        token_url = f"https://api.coingecko.com/api/v3/coins/{coin_id}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=false&sparkline=false"
-        response = requests.get(token_url, headers=headers)
-        
-        if response.status_code == 429:
-            return "Rate limit reached. Please try again in a minute."
-            
-        data = response.json()
-        
-        # Create embed with token color if available
-        color = discord.Color.blue()
-        if data.get('image', {}).get('small'):
-            embed = discord.Embed(
-                title=f"{data['name']} ({data['symbol'].upper()})",
-                color=color,
-                timestamp=datetime.utcnow(),
-                url=data.get('links', {}).get('homepage', [''])[0]  # Add homepage link to title
+        if not pair:
+            pair = dex_data['pairs'][0]  # Fallback to first pair if none with good liquidity
+
+        # Create embed
+        token_name = pair.get('baseToken', {}).get('name', 'Unknown Token')
+        token_symbol = pair.get('baseToken', {}).get('symbol', '???')
+        chain = pair.get('chainId', 'unknown')
+        contract = pair.get('baseToken', {}).get('address', '')
+
+        embed = discord.Embed(
+            title=f"{token_name} ({token_symbol})",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+
+        # Add price info
+        price_usd = float(pair.get('priceUsd', 0))
+        price_str = f"${price_usd:.12f}" if price_usd < 0.000001 else f"${price_usd:.8f}"
+        embed.add_field(name="💰 Price USD", value=price_str, inline=True)
+
+        # Add 24h change
+        price_change = pair.get('priceChange', {}).get('h24', 0)
+        if price_change:
+            change_emoji = "📈" if float(price_change) > 0 else "📉"
+            embed.add_field(
+                name="24h Change",
+                value=f"{change_emoji} {price_change}%",
+                inline=True
             )
-            embed.set_thumbnail(url=data['image']['small'])
-        
-        # Price and market info section
-        market_data = data.get('market_data', {})
-        current_price = market_data.get('current_price', {}).get('usd')
-        market_cap = market_data.get('market_cap', {}).get('usd')
-        volume = market_data.get('total_volume', {}).get('usd')
-        ath = market_data.get('ath', {}).get('usd')
-        ath_date = market_data.get('ath_date', {}).get('usd')
-        price_change_24h = market_data.get('price_change_percentage_24h')
-        
-        # Price formatting
-        if current_price:
-            if current_price < 0.000001:
-                price_str = f"${current_price:.12f}"
-            elif current_price < 0.01:
-                price_str = f"${current_price:.10f}"
-            else:
-                price_str = f"${current_price:.4f}"
-            embed.add_field(name="💰 Price USD", value=price_str, inline=True)
-            
-            if price_change_24h:
-                change_emoji = "📈" if price_change_24h > 0 else "📉"
-                embed.add_field(
-                    name="24h Change", 
-                    value=f"{change_emoji} {price_change_24h:.2f}%", 
-                    inline=True
-                )
-        
-        if market_cap:
-            embed.add_field(name="📊 Market Cap", value=f"${market_cap:,.2f}", inline=False)
-        
-        if volume:
-            embed.add_field(name="📈 24h Volume", value=f"${volume:,.2f}", inline=True)
-        
-        # ATH with date
-        if ath:
-            if ath < 0.01:
-                ath_str = f"${ath:.10f}"
-            else:
-                ath_str = f"${ath:.4f}"
-            
-            if ath_date:
-                ath_datetime = datetime.strptime(ath_date, "%Y-%m-%dT%H:%M:%S.%fZ")
-                days_since_ath = (datetime.utcnow() - ath_datetime).days
-                ath_str += f"\n({days_since_ath} days ago)"
-            
-            embed.add_field(name="🏆 All Time High", value=ath_str, inline=True)
-        
-        # Add blockchain info
-        platforms = data.get('platforms', {})
-        if platforms:
-            native_chain = None
-            if 'solana' in platforms and coin['symbol'].lower() in ['bonk', 'rlb', 'hnt']:
-                native_chain = 'solana'
-            elif 'ethereum' in platforms and coin['symbol'].lower() in ['pepe', 'wojak']:
-                native_chain = 'ethereum'
-            elif 'binance-smart-chain' in platforms and coin['symbol'].lower() in ['cake', 'bsc']:
-                native_chain = 'binance-smart-chain'
-            
-            if native_chain and platforms.get(native_chain):
-                platform_text = f"`{platforms[native_chain]}`"
-                embed.add_field(name=f"📝 {native_chain.title()} Contract", value=platform_text, inline=False)
-            else:
-                platform_text = "\n".join([f"{k.title()}: `{v}`" for k, v in platforms.items() if v])
-                if platform_text:
-                    if len(platform_text) > 1024:
-                        platform_text = platform_text[:1021] + "..."
-                    embed.add_field(name="📝 Contract Addresses", value=platform_text, inline=False)
-        
-        # Add social links
-        social_links = []
-        if data.get('links', {}).get('twitter_screen_name'):
-            twitter_handle = data['links']['twitter_screen_name']
-            social_links.append(f"[𝕏 Twitter](https://twitter.com/{twitter_handle})")
-        
-        if data.get('links', {}).get('telegram_channel_identifier'):
-            telegram = data['links']['telegram_channel_identifier']
-            social_links.append(f"[📱 Telegram](https://t.me/{telegram})")
-        
-        if social_links:
-            embed.add_field(name="🌐 Social", value=" | ".join(social_links), inline=False)
-        
-        # Add trading links
+
+        # Add liquidity
+        liquidity = float(pair.get('liquidity', {}).get('usd', 0))
+        embed.add_field(name="💧 Liquidity", value=f"${liquidity:,.2f}", inline=False)
+
+        # Add volume
+        volume = float(pair.get('volume', {}).get('h24', 0))
+        embed.add_field(name="📊 24h Volume", value=f"${volume:,.2f}", inline=True)
+
+        # Add age if available
+        if pair.get('pairCreatedAt'):
+            created_at = datetime.fromtimestamp(int(pair['pairCreatedAt'])/1000)
+            days_old = (datetime.utcnow() - created_at).days
+            embed.add_field(name="📅 Age", value=f"{days_old} days", inline=True)
+
+        # Add contract address
+        if contract:
+            embed.add_field(name=f"📝 Contract ({chain.upper()})", value=f"`{contract}`", inline=False)
+
+        # Add trading links based on chain
         links = []
-        if 'ethereum' in platforms:
-            contract = platforms['ethereum']
+        if chain in ['eth', 'ethereum']:
             links.extend([
                 f"[🔍 DEXScreener](https://dexscreener.com/ethereum/{contract})",
                 f"[📊 Pump.fun](https://pump.fun/token/{contract})",
-                f"[🐂 BullX](https://bullx.io/token/{contract})"
+                f"[🐂 BullX](https://bullx.io/token/{contract})",
+                f"[🤖 BonkBot](https://t.me/BonkBot)",
+                f"[📱 Photon](https://photon.rs/token/{contract})",
+                f"[🔄 Jupiter](https://jup.ag/swap/SOL-{contract})"
             ])
-        elif 'solana' in platforms:
-            contract = platforms['solana']
+        elif chain == 'solana':
             links.extend([
                 f"[🔍 DEXScreener](https://dexscreener.com/solana/{contract})",
                 f"[👁️ Birdeye](https://birdeye.so/token/{contract})",
-                f"[🐂 BullX](https://bullx.io/token/{contract})"
+                f"[🐂 BullX](https://bullx.io/token/{contract})",
+                f"[🤖 BonkBot](https://t.me/BonkBot)",
+                f"[📱 Photon](https://photon.rs/token/{contract})",
+                f"[🔄 Jupiter](https://jup.ag/swap/SOL-{contract})"
             ])
-        elif 'binance-smart-chain' in platforms:
-            contract = platforms['binance-smart-chain']
+        elif chain == 'bsc':
             links.extend([
                 f"[🔍 DEXScreener](https://dexscreener.com/bsc/{contract})",
                 f"[💩 PooCoin](https://poocoin.app/tokens/{contract})",
-                f"[🐂 BullX](https://bullx.io/token/{contract})"
+                f"[🐂 BullX](https://bullx.io/token/{contract})",
+                f"[🤖 BonkBot](https://t.me/BonkBot)",
+                f"[📱 Photon](https://photon.rs/token/{contract})",
+                f"[🔄 Jupiter](https://jup.ag/swap/SOL-{contract})"
             ])
-        
+
         if links:
-            embed.add_field(name="📈 Trading Links", value=" | ".join(links), inline=False)
-        
+            embed.add_field(name="🔗 Links", value=" | ".join(links), inline=False)
+
         # Add footer
-        embed.set_footer(text="Data: CoinGecko | Prices update every minute", icon_url="https://static.coingecko.com/s/thumbnail-007177f3eca19695592f0b8b0eabbdae282b54154e1be912285c9034ea6cbaf2.png")
+        embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")
         
         return embed
         
@@ -198,7 +151,7 @@ async def on_message(message):
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="crypto prices | $symbol"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="memecoin prices | $symbol"))
 
 # Run the bot
 bot.run(DISCORD_TOKEN) 
