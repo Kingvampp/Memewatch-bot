@@ -57,66 +57,67 @@ def create_price_chart(prices, created_at):
                 last_timestamp = timestamp
 
         # Determine if price is up or down
-        line_color = '00ff00' if price_values[-1] >= price_values[0] else 'ff0000'
+        line_color = 'rgb(0,255,0)' if price_values[-1] >= price_values[0] else 'rgb(255,0,0)'
 
-        # Create chart-img.com URL
-        chart_data = {
-            "chart": {
-                "type": "line",
-                "data": {
-                    "labels": times[::-1],
-                    "datasets": [{
-                        "data": price_values[::-1],
-                        "fill": False,
-                        "borderColor": f"#{line_color}",
-                        "tension": 0.1,
-                        "borderWidth": 2
+        # Create QuickChart configuration
+        chart_config = {
+            "type": "line",
+            "data": {
+                "labels": times[::-1],
+                "datasets": [{
+                    "data": price_values[::-1],
+                    "fill": False,
+                    "borderColor": line_color,
+                    "tension": 0.1,
+                    "borderWidth": 2,
+                    "pointRadius": 0
+                }]
+            },
+            "options": {
+                "title": {
+                    "display": True,
+                    "text": title_text,
+                    "fontColor": "white",
+                    "fontSize": 16
+                },
+                "legend": {
+                    "display": False
+                },
+                "scales": {
+                    "yAxes": [{
+                        "ticks": {
+                            "fontColor": "white",
+                            "maxTicksLimit": 8,
+                            "callback": "function(value) { return value.toFixed(8); }"
+                        },
+                        "gridLines": {
+                            "color": "rgba(100,100,100,0.2)",
+                            "zeroLineColor": "rgba(100,100,100,0.2)"
+                        }
+                    }],
+                    "xAxes": [{
+                        "ticks": {
+                            "fontColor": "white",
+                            "maxTicksLimit": 8
+                        },
+                        "gridLines": {
+                            "color": "rgba(100,100,100,0.2)",
+                            "zeroLineColor": "rgba(100,100,100,0.2)"
+                        }
                     }]
                 },
-                "options": {
-                    "title": {
-                        "display": True,
-                        "text": title_text,
-                        "fontColor": "#ffffff"
-                    },
-                    "legend": {
-                        "display": False
-                    },
-                    "scales": {
-                        "yAxes": [{
-                            "ticks": {
-                                "fontColor": "#ffffff",
-                                "callback": "function(value) { return value.toFixed(8); }"
-                            },
-                            "gridLines": {
-                                "color": "#666666",
-                                "zeroLineColor": "#666666"
-                            }
-                        }],
-                        "xAxes": [{
-                            "ticks": {
-                                "fontColor": "#ffffff"
-                            },
-                            "gridLines": {
-                                "color": "#666666",
-                                "zeroLineColor": "#666666"
-                            }
-                        }]
-                    }
+                "plugins": {
+                    "backgroundImageUrl": "https://quickchart.io/images/dark-background.png"
                 }
-            },
-            "backgroundColor": "#2f3136",
-            "width": 800,
-            "height": 400,
-            "format": "png"
+            }
         }
 
         # Convert to URL-safe JSON
-        chart_json = json.dumps(chart_data)
+        chart_json = json.dumps(chart_config)
         chart_json_b64 = base64.b64encode(chart_json.encode()).decode()
         
-        # Return the chart-img.com URL
-        return f"https://chart-img.com/chart?c={chart_json_b64}"
+        # Return the QuickChart URL
+        return f"https://quickchart.io/chart?c={chart_json_b64}&backgroundColor=rgb(47,49,54)&width=800&height=400"
         
     except Exception as e:
         print(f"Error creating chart: {str(e)}")
