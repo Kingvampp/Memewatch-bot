@@ -1,5 +1,10 @@
 discord.py==2.3.2
-requests==2.32.3
+requests==2.31.0
 python-dotenv==1.0.0
 aiohttp==3.9.1
-certifi>=2023.7.22 
+certifi==2023.11.17
+charset-normalizer==3.3.2
+idna==3.6
+multidict==6.0.4
+urllib3==2.1.0
+yarl==1.9.4 
