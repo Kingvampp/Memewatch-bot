@@ -7,8 +7,6 @@ import json
 from datetime import datetime, timedelta
 import time
 import re
-import plotly.graph_objects as go
-import io
 import base64
 
 # Load environment variables
