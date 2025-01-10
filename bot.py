@@ -182,12 +182,23 @@ def get_token_info(query):
 
         # Add price chart if creation time is available
         if created_at and pair.get('priceHistory'):
+            print("=== DEBUG: Starting chart creation ===")
+            print(f"Token age: {token_age}")
+            print(f"Number of price points: {len(pair['priceHistory'])}")
             chart_url = create_price_chart(pair['priceHistory'], created_at)
             if chart_url:
-                print(f"Chart URL: {chart_url}")  # Debug print
-                embed.set_image(url=chart_url)
+                print(f"=== DEBUG: Chart URL generated ===")
+                print(f"URL Length: {len(chart_url)}")
+                print(f"Chart URL: {chart_url}")
+                try:
+                    # Test if URL is accessible
+                    test_response = requests.get(chart_url)
+                    print(f"URL Test Status: {test_response.status_code}")
+                    embed.set_image(url=chart_url)
+                except Exception as e:
+                    print(f"Error testing URL: {str(e)}")
             else:
-                print("Failed to create chart URL")  # Debug print
+                print("=== DEBUG: Failed to create chart URL ===")
 
         # Add footer
         embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")
