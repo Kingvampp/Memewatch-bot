@@ -221,15 +221,21 @@ async def on_message(message):
     content = message.content.strip()
 
     # Test command for image sending
-    if content == "$testimage":
-        test_embed = discord.Embed(title="Image Test")
-        test_embed.set_image(url="https://www.quickchart.io/chart?c={type:'line',data:{labels:[1,2,3],datasets:[{data:[1,2,3]}]}}")
-        await message.channel.send(embed=test_embed)
-        return
+    if content.lower() == "$testimage":
+        try:
+            test_embed = discord.Embed(title="Image Test", color=discord.Color.blue())
+            # Using a known working Discord image URL
+            test_embed.set_image(url="https://discord.com/assets/7c8f476123d28d103efe381543274c25.png")
+            await message.channel.send("Testing image capability...")
+            await message.channel.send(embed=test_embed)
+            return
+        except Exception as e:
+            await message.channel.send(f"Error sending test image: {str(e)}")
+            return
 
-    # Check if it's a contract address or starts with $
-    if is_contract_address(content) or content.startswith('$'):
-        query = content[1:] if content.startswith('$') else content
+    # Only proceed with token lookup if it's not the test command
+    if content.startswith('$') and content.lower() != "$testimage":
+        query = content[1:].strip()
         if query:
             async with message.channel.typing():
                 response, _ = get_token_info(query)
@@ -239,6 +245,13 @@ async def on_message(message):
                     await message.channel.send(embed=response)
         else:
             await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `0x...`")
+    elif is_contract_address(content):
+        async with message.channel.typing():
+            response, _ = get_token_info(content)
+            if isinstance(response, str):
+                await message.channel.send(response)
+            else:
+                await message.channel.send(embed=response)
 
 @bot.event
 async def on_ready():
