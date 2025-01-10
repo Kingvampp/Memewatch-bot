@@ -220,6 +220,13 @@ async def on_message(message):
     # Get the message content
     content = message.content.strip()
 
+    # Test command for image sending
+    if content == "$testimage":
+        test_embed = discord.Embed(title="Image Test")
+        test_embed.set_image(url="https://www.quickchart.io/chart?c={type:'line',data:{labels:[1,2,3],datasets:[{data:[1,2,3]}]}}")
+        await message.channel.send(embed=test_embed)
+        return
+
     # Check if it's a contract address or starts with $
     if is_contract_address(content) or content.startswith('$'):
         query = content[1:] if content.startswith('$') else content
