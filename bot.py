@@ -66,20 +66,26 @@ def create_price_chart(prices, created_at):
         config = {
             "type":"line",
             "data":{
-                "labels": times[::-1],
+                "labels": times[::-1][-20:],  # Last 20 points only
                 "datasets":[{
-                    "data": prices_list[::-1],
+                    "data": prices_list[::-1][-20:],  # Last 20 points only
                     "borderColor": f"#{color}",
-                    "fill":False
+                    "fill": False,
+                    "tension": 0.1
                 }]
+            },
+            "options": {
+                "plugins": {
+                    "legend": {"display": False}
+                }
             }
         }
 
         # Convert to URL-safe base64
         config_str = base64.urlsafe_b64encode(json.dumps(config).encode()).decode()
         
-        # Return shorter URL
-        return f"https://quickchart.io/chart?c={config_str}&w=800&h=400&bkg=2f3136"
+        # Return shorter URL with minimal parameters
+        return f"https://quickchart.io/chart?c={config_str}&w=400&h=300"
         
     except Exception as e:
         print(f"Error creating chart: {str(e)}")
