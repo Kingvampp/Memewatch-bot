@@ -52,60 +52,72 @@ def create_price_chart(prices, created_at):
         for price in reversed(prices):  # Newest first
             timestamp = price['timestamp'] // 1000  # Convert to seconds
             if timestamp - last_timestamp >= interval:
-                times.append(datetime.fromtimestamp(timestamp))
+                times.append(datetime.fromtimestamp(timestamp).strftime('%H:%M'))
                 price_values.append(float(price['price']))
                 last_timestamp = timestamp
 
         # Determine if price is up or down
-        line_color = '#00ff00' if price_values[-1] >= price_values[0] else '#ff0000'
+        line_color = '00ff00' if price_values[-1] >= price_values[0] else 'ff0000'
 
-        # Create plotly figure
-        fig = go.Figure()
+        # Create chart-img.com URL
+        chart_data = {
+            "chart": {
+                "type": "line",
+                "data": {
+                    "labels": times[::-1],
+                    "datasets": [{
+                        "data": price_values[::-1],
+                        "fill": False,
+                        "borderColor": f"#{line_color}",
+                        "tension": 0.1,
+                        "borderWidth": 2
+                    }]
+                },
+                "options": {
+                    "title": {
+                        "display": True,
+                        "text": title_text,
+                        "fontColor": "#ffffff"
+                    },
+                    "legend": {
+                        "display": False
+                    },
+                    "scales": {
+                        "yAxes": [{
+                            "ticks": {
+                                "fontColor": "#ffffff",
+                                "callback": "function(value) { return value.toFixed(8); }"
+                            },
+                            "gridLines": {
+                                "color": "#666666",
+                                "zeroLineColor": "#666666"
+                            }
+                        }],
+                        "xAxes": [{
+                            "ticks": {
+                                "fontColor": "#ffffff"
+                            },
+                            "gridLines": {
+                                "color": "#666666",
+                                "zeroLineColor": "#666666"
+                            }
+                        }]
+                    }
+                }
+            },
+            "backgroundColor": "#2f3136",
+            "width": 800,
+            "height": 400,
+            "format": "png"
+        }
+
+        # Convert to URL-safe JSON
+        chart_json = json.dumps(chart_data)
+        chart_json_b64 = base64.b64encode(chart_json.encode()).decode()
         
-        # Add price line
-        fig.add_trace(go.Scatter(
-            x=times,
-            y=price_values,
-            mode='lines',
-            line=dict(color=line_color, width=2),
-            name='Price'
-        ))
-
-        # Update layout
-        fig.update_layout(
-            title=dict(
-                text=title_text,
-                x=0.5,
-                xanchor='center',
-                font=dict(color='white')
-            ),
-            plot_bgcolor='#2f3136',
-            paper_bgcolor='#2f3136',
-            xaxis=dict(
-                showgrid=True,
-                gridcolor='#666666',
-                gridwidth=0.5,
-                tickfont=dict(color='white'),
-                title_font=dict(color='white')
-            ),
-            yaxis=dict(
-                showgrid=True,
-                gridcolor='#666666',
-                gridwidth=0.5,
-                tickfont=dict(color='white'),
-                title_font=dict(color='white'),
-                tickformat='.8f'
-            ),
-            showlegend=False,
-            margin=dict(l=50, r=50, t=50, b=50),
-            width=800,
-            height=400
-        )
-
-        # Save to temporary file
-        temp_file = f"chart_{int(time.time())}.png"
-        fig.write_image(temp_file)
-        return temp_file
+        # Return the chart-img.com URL
+        return f"https://chart-img.com/chart?c={chart_json_b64}"
+        
     except Exception as e:
         print(f"Error creating chart: {str(e)}")
         return None
@@ -218,17 +230,15 @@ def get_token_info(query):
             embed.add_field(name="🔗 Links", value=" | ".join(links), inline=False)
 
         # Add price chart if creation time is available
-        chart_file = None
         if created_at and pair.get('priceHistory'):
-            chart_path = create_price_chart(pair['priceHistory'], created_at)
-            if chart_path:
-                chart_file = discord.File(chart_path, filename="chart.png")
-                embed.set_image(url="attachment://chart.png")
+            chart_url = create_price_chart(pair['priceHistory'], created_at)
+            if chart_url:
+                embed.set_image(url=chart_url)
 
         # Add footer
         embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")
         
-        return embed, chart_file
+        return embed, None
         
     except requests.exceptions.RequestException as e:
         return f"Network error while fetching token information. Please try again.", None
@@ -249,19 +259,11 @@ async def on_message(message):
         query = content[1:] if content.startswith('$') else content
         if query:
             async with message.channel.typing():
-                response, chart_file = get_token_info(query)
+                response, _ = get_token_info(query)
                 if isinstance(response, str):
                     await message.channel.send(response)
                 else:
-                    if chart_file:
-                        await message.channel.send(embed=response, file=chart_file)
-                        # Clean up temporary file
-                        try:
-                            os.remove(chart_file.filename)
-                        except:
-                            pass
-                    else:
-                        await message.channel.send(embed=response)
+                    await message.channel.send(embed=response)
         else:
             await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `0x...`")
 
