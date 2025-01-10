@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 import json
 from datetime import datetime, timedelta
 import time
+import re
+from quickchart import QuickChart
 
 # Load environment variables
 load_dotenv()
@@ -15,6 +17,100 @@ DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='$', intents=intents)
+
+def create_price_chart(prices, created_at):
+    try:
+        # Calculate time intervals based on token age
+        now = datetime.utcnow()
+        token_age = now - created_at
+        
+        # Filter and sample data points based on age
+        if token_age < timedelta(hours=1):
+            # Under 1 hour: 1-minute intervals
+            interval = 60  # 1 minute in seconds
+            label_format = 'HH:mm'
+        elif token_age < timedelta(hours=24):
+            # Under 24 hours: 30-minute intervals
+            interval = 1800  # 30 minutes in seconds
+            label_format = 'HH:mm'
+        else:
+            # Over 24 hours: 1-hour intervals
+            interval = 3600  # 1 hour in seconds
+            label_format = 'MM/DD HH:mm'
+
+        # Process price data
+        times = []
+        price_values = []
+        last_timestamp = 0
+        
+        for price in reversed(prices):  # Newest first
+            timestamp = price['timestamp'] // 1000  # Convert to seconds
+            if timestamp - last_timestamp >= interval:
+                times.append(datetime.fromtimestamp(timestamp).strftime(label_format))
+                price_values.append(float(price['price']))
+                last_timestamp = timestamp
+
+        # Create QuickChart configuration
+        chart = QuickChart()
+        chart.width = 400
+        chart.height = 200
+        chart.background_color = '#2f3136'
+        
+        chart.config = {
+            'type': 'line',
+            'data': {
+                'labels': times[::-1],  # Reverse to show oldest to newest
+                'datasets': [{
+                    'label': 'Price',
+                    'data': price_values[::-1],
+                    'fill': False,
+                    'borderColor': '#00ff00',
+                    'tension': 0.1
+                }]
+            },
+            'options': {
+                'scales': {
+                    'y': {
+                        'ticks': {
+                            'color': '#ffffff'
+                        },
+                        'grid': {
+                            'color': '#666666',
+                            'alpha': 0.2
+                        }
+                    },
+                    'x': {
+                        'ticks': {
+                            'color': '#ffffff',
+                            'maxRotation': 45,
+                            'minRotation': 45
+                        },
+                        'grid': {
+                            'color': '#666666',
+                            'alpha': 0.2
+                        }
+                    }
+                },
+                'plugins': {
+                    'legend': {
+                        'display': False
+                    }
+                }
+            }
+        }
+        
+        return chart.get_url()
+    except Exception as e:
+        print(f"Error creating chart: {str(e)}")
+        return None
+
+def is_contract_address(text):
+    # ETH address pattern
+    eth_pattern = r'^0x[a-fA-F0-9]{40}$'
+    # SOL address pattern (base58 encoded, 32-44 chars)
+    sol_pattern = r'^[1-9A-HJ-NP-Za-km-z]{32,44}$'
+    
+    return bool(re.match(eth_pattern, text)) or bool(re.match(sol_pattern, text))
 
 def get_token_info(query):
     try:
@@ -77,6 +173,7 @@ def get_token_info(query):
         embed.add_field(name="📊 24h Volume", value=f"${volume:,.2f}", inline=True)
 
         # Get creation time and add age
+        created_at = None
         if pair.get('pairCreatedAt'):
             created_at = datetime.fromtimestamp(int(pair['pairCreatedAt'])/1000)
             days_old = (datetime.utcnow() - created_at).days
@@ -114,13 +211,11 @@ def get_token_info(query):
         if links:
             embed.add_field(name="🔗 Links", value=" | ".join(links), inline=False)
 
-        # Add chart link
-        if chain in ['eth', 'ethereum']:
-            chart_url = f"https://dexscreener.com/ethereum/{contract}"
-            embed.add_field(name="📈 Live Chart", value=f"[View on DEXScreener]({chart_url})", inline=False)
-        elif chain == 'solana':
-            chart_url = f"https://birdeye.so/token/{contract}"
-            embed.add_field(name="📈 Live Chart", value=f"[View on Birdeye]({chart_url})", inline=False)
+        # Add price chart if creation time is available
+        if created_at and pair.get('priceHistory'):
+            chart_url = create_price_chart(pair['priceHistory'], created_at)
+            if chart_url:
+                embed.set_thumbnail(url=chart_url)
 
         # Add footer
         embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")
@@ -138,9 +233,12 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Check if message starts with $ and has content after it
-    if message.content.startswith('$'):
-        query = message.content[1:].strip()  # Remove $ and any whitespace
+    # Get the message content
+    content = message.content.strip()
+
+    # Check if it's a contract address or starts with $
+    if is_contract_address(content) or content.startswith('$'):
+        query = content[1:] if content.startswith('$') else content
         if query:
             async with message.channel.typing():
                 response, _ = get_token_info(query)
@@ -149,7 +247,7 @@ async def on_message(message):
                 else:
                     await message.channel.send(embed=response)
         else:
-            await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `$0x...`")
+            await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `0x...`")
 
 @bot.event
 async def on_ready():
