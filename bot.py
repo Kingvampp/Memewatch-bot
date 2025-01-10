@@ -62,30 +62,12 @@ def create_price_chart(prices, created_at):
         # Determine color based on price direction
         color = '00ff00' if prices_list[-1] >= prices_list[0] else 'ff0000'
 
-        # Create minimal chart config
-        config = {
-            "type":"line",
-            "data":{
-                "labels": times[::-1][-20:],  # Last 20 points only
-                "datasets":[{
-                    "data": prices_list[::-1][-20:],  # Last 20 points only
-                    "borderColor": f"#{color}",
-                    "fill": False,
-                    "tension": 0.1
-                }]
-            },
-            "options": {
-                "plugins": {
-                    "legend": {"display": False}
-                }
-            }
-        }
-
-        # Convert to URL-safe base64
-        config_str = base64.urlsafe_b64encode(json.dumps(config).encode()).decode()
+        # Format data for chart
+        data_points = ','.join(str(p) for p in prices_list[::-1][-20:])
+        labels = ','.join(f'"{t}"' for t in times[::-1][-20:])
         
-        # Return shorter URL with minimal parameters
-        return f"https://quickchart.io/chart?c={config_str}&w=400&h=300"
+        # Create direct ChartJS URL
+        return f"https://image-charts.com/chart?cht=lc&chs=400x300&chd=t:{data_points}&chl={labels}&chco={color}&chf=bg,s,32353b&chdl=Price&chtt={title}"
         
     except Exception as e:
         print(f"Error creating chart: {str(e)}")
