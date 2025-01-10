@@ -16,7 +16,15 @@ DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 # Initialize bot with command prefix '$'
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='$', intents=intents)
+intents.messages = True
+intents.guild_messages = True
+intents.message_attachments = True
+
+bot = commands.Bot(
+    command_prefix='$',
+    intents=intents,
+    allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True)
+)
 
 def create_price_chart(prices, created_at):
     try:
