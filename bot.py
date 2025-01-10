@@ -240,7 +240,10 @@ def get_token_info(query):
         if created_at and pair.get('priceHistory'):
             chart_url = create_price_chart(pair['priceHistory'], created_at)
             if chart_url:
+                print(f"Chart URL: {chart_url}")  # Debug print
                 embed.set_image(url=chart_url)
+            else:
+                print("Failed to create chart URL")  # Debug print
 
         # Add footer
         embed.set_footer(text=f"Data: DEXScreener | Chain: {chain.upper()}")
