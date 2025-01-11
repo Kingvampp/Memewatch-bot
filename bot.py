@@ -321,94 +321,22 @@ def get_token_info(query):
         except Exception as e:
             logger.error(f"Error fetching bundle info: {str(e)}")
 
-        # Format message
+        # Format message with ANSI colors
         message = [
-            f"```ml",
-            f"{token_symbol} [{h24_change:+.1f}%] - SOL ↗\n",
-            f"💰 SOL @ {dex_id}",
-            f"💵 USD: {price_str}"
+            f"\x1b[38;2;255;160;160m{token_symbol}\x1b[0m [{h24_change:+.1f}%] - \x1b[38;2;255;160;160mSOL\x1b[0m ↗\n",
+            f"💰 \x1b[38;2;255;160;160mSOL\x1b[0m @ \x1b[38;2;255;160;160m{dex_id}\x1b[0m",
+            f"💵 USD: \x1b[38;2;255;160;160m${price_str}\x1b[0m",
+            f"💧 Liq: \x1b[38;2;255;160;160m${liquidity:,.0f}\x1b[0m [x{liq_ratio:.1f}]",
+            f"📊 Vol: \x1b[38;2;255;160;160m${volume_h24:,.0f}\x1b[0m ⏰ Age: \x1b[38;2;255;160;160m{hours_old}h\x1b[0m",
+            f"📈 1H: {h1_change:+.1f}% • \x1b[38;2;255;160;160m${volume_h1:,.0f}\x1b[0m",
+            f"🔄 TH: \x1b[38;2;255;160;160m{buys}\x1b[0m•\x1b[38;2;255;160;160m{sells}\x1b[0m•\x1b[38;2;255;160;160m{total}\x1b[0m [{buy_percentage:.0f}%]",
+            f"\n\x1b[38;2;255;160;160m{contract}\x1b[0m\n",
+            f"🔍 \x1b[38;2;255;160;160mBirdeye\x1b[0m•\x1b[38;2;255;160;160mJupiter\x1b[0m•\x1b[38;2;255;160;160mRaydium\x1b[0m•\x1b[38;2;255;160;160mOrca\x1b[0m",
+            f"📊 \x1b[38;2;255;160;160mDexLab\x1b[0m•\x1b[38;2;255;160;160mGooseFX\x1b[0m•\x1b[38;2;255;160;160mAldrin\x1b[0m•\x1b[38;2;255;160;160mPhoenix\x1b[0m"
         ]
 
-        # Add MC and FDV
-        if market_cap > 0 or fdv > 0:
-            mc_fdv = []
-            if market_cap > 0:
-                mc_fdv.append(f"MC: ${market_cap/1e6:.1f}M")
-            if fdv > 0:
-                mc_fdv.append(f"FDV: ${fdv/1e6:.1f}M")
-            message.append(f"💎 {' • '.join(mc_fdv)}")
-
-        # Add ATH if available
-        if ath > 0:
-            ath_str = f"${ath:.12f}" if ath < 0.000001 else f"${ath:.8f}"
-            message.append(f"🏆 ATH: {ath_str} [{ath_change:.1f}%]")
-
-        # Add liquidity
-        message.append(f"💧 Liq: ${liquidity:,.0f} [x{liq_ratio:.1f}]")
-
-        # Add volume and age
-        vol_age = f"📊 Vol: ${volume_h24:,.0f}"
-        if pair.get('pairCreatedAt'):
-            created_at = datetime.fromtimestamp(int(pair['pairCreatedAt'])/1000)
-            hours_old = int((datetime.utcnow() - created_at).total_seconds() / 3600)
-            vol_age += f" ⏰ Age: {hours_old}h"
-        message.append(vol_age)
-
-        # Add 1H stats
-        message.append(f"📈 1H: {h1_change:+.1f}% • ${volume_h1:,.0f}")
-
-        # Add trading history
-        if pair.get('txns'):
-            buys = pair['txns'].get('h24', {}).get('buys', 0)
-            sells = pair['txns'].get('h24', {}).get('sells', 0)
-            total = buys + sells
-            buy_percentage = (buys/total * 100) if total > 0 else 0
-            message.append(f"🔄 TH: {buys}•{sells}•{total} [{buy_percentage:.0f}%]")
-
-        # Enhanced bundle display
-        if bundles:
-            message.append(f"🎁 Bundles: {' • '.join(bundles)}")
-            if bundle_history:
-                message.append(f"📊 Bundle History: {' → '.join(bundle_history)}")
-
-        # Add Solana-specific info
-        try:
-            # Get token metadata from Birdeye
-            metadata_url = f"https://public-api.birdeye.so/public/token_metadata?address={contract}"
-            metadata_response = requests.get(metadata_url, headers=headers, timeout=10)
-            if metadata_response.status_code == 200:
-                metadata = metadata_response.json()
-                if metadata.get('success') and metadata.get('data'):
-                    token_data = metadata['data']
-                    
-                    # Add social links if available
-                    socials = []
-                    if token_data.get('twitter'):
-                        socials.append(f"Twitter")
-                    if token_data.get('discord'):
-                        socials.append(f"Discord")
-                    if token_data.get('telegram'):
-                        socials.append(f"Telegram")
-                    if token_data.get('website'):
-                        socials.append(f"Website")
-                    
-                    if socials:
-                        message.append(f"🔗 Links: {' • '.join(socials)}")
-
-        except Exception as e:
-            logger.error(f"Error fetching token metadata: {str(e)}")
-
-        # Add contract
-        message.append(f"\n{contract}\n")
-
-        # Enhanced Solana DEX links with recommended
-        message.extend([
-            "🔍 Birdeye•Jupiter•Raydium•Orca",
-            "📊 DexLab•GooseFX•Aldrin•Phoenix"
-        ])
-
-        message.append("```")
-        return "\n".join(message)
+        # Join with newlines and wrap in code block with ANSI support
+        return "```ansi\n" + "\n".join(message) + "\n```"
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Network error: {str(e)}")
