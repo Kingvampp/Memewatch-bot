@@ -129,21 +129,21 @@ class CryptoBot(commands.Bot):
             while not self.is_closed():
                 try:
                     # Log connection status
-                    is_connected = self.is_ws_ratelimited() is False and self.is_connected()
-                    ws_state = "Connected" if is_connected else "Disconnected"
+                    ws_state = "Connected" if self.ws and not self.ws.closed else "Disconnected"
                     logger.info(f"WebSocket state: {ws_state}")
                     
                     # Log status in each guild
                     for guild in self.guilds:
                         me = guild.me
-                        logger.info(f"Status in {guild.name}: {me.status}, "
-                                  f"Permissions: {me.guild_permissions.value}")
+                        logger.info(f"Status in {guild.name}: {me.status}")
                     
                     # Check if bot needs to reconnect
-                    if not is_connected and not self.is_closed():
+                    if not self.is_ready():
                         logger.warning("Bot appears to be disconnected, attempting to recover...")
                         try:
-                            await self.connect(reconnect=True)
+                            if not self.is_closed():
+                                await self.close()
+                            await self.start(DISCORD_TOKEN)
                         except Exception as e:
                             logger.error(f"Failed to recover connection: {str(e)}")
                             
