@@ -60,21 +60,33 @@ class CryptoBot(commands.Bot):
     async def setup_hook(self):
         logger.info("Setting up bot hooks...")
         try:
-            await self.add_cog(AnalyzerCog(self))
-            logger.info("Added AnalyzerCog successfully")
+            # Load all cogs
+            await self.load_extension("cogs.analyzer")
+            await self.load_extension("cogs.security")
+            await self.load_extension("cogs.solana")
+            logger.info("Loaded all cogs successfully")
             
-            # Start heartbeat task
-            self.create_background_task(self._heartbeat())
-            logger.info("Started heartbeat task")
-            
-            # Start presence refresh task
-            self.create_background_task(self._refresh_presence())
-            logger.info("Started presence refresh task")
+            # Start background tasks
+            self.bg_task = self.loop.create_task(self._heartbeat())
+            self.presence_task = self.loop.create_task(self._refresh_presence())
+            logger.info("Started background tasks")
             
         except Exception as e:
             logger.error(f"Error in setup_hook: {str(e)}")
             logger.error(traceback.format_exc())
             
+    async def on_error(self, event, *args, **kwargs):
+        """Global error handler for all events"""
+        logger.error(f"Error in {event}: {traceback.format_exc()}")
+        
+    async def on_command_error(self, ctx, error):
+        """Error handler for command errors"""
+        if isinstance(error, commands.CommandNotFound):
+            return  # Ignore command not found errors
+            
+        logger.error(f"Command error: {str(error)}")
+        await ctx.send(f"❌ An error occurred: {str(error)}")
+
     async def on_ready(self):
         """Called when the bot is ready and connected to Discord"""
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
@@ -128,34 +140,32 @@ class CryptoBot(commands.Bot):
         try:
             while not self.is_closed():
                 try:
-                    # Log connection status
-                    ws_state = "Connected" if self.ws and not self.ws.closed else "Disconnected"
-                    logger.info(f"WebSocket state: {ws_state}")
-                    
-                    # Log status in each guild
-                    for guild in self.guilds:
-                        me = guild.me
-                        logger.info(f"Status in {guild.name}: {me.status}")
-                    
-                    # Check if bot needs to reconnect
-                    if not self.is_ready():
-                        logger.warning("Bot appears to be disconnected, attempting to recover...")
+                    # Check WebSocket connection
+                    if not self.ws or self.ws.closed:
+                        logger.warning("WebSocket disconnected, attempting to reconnect...")
                         try:
-                            if not self.is_closed():
-                                await self.close()
+                            await self.close()
+                            await asyncio.sleep(5)  # Wait before reconnecting
                             await self.start(DISCORD_TOKEN)
                         except Exception as e:
-                            logger.error(f"Failed to recover connection: {str(e)}")
-                            
+                            logger.error(f"Failed to reconnect: {str(e)}")
+                            await asyncio.sleep(30)  # Wait longer before next attempt
+                            continue
+                    
+                    # Log connection status
+                    logger.info(f"Bot is {'connected' if self.is_ready() else 'disconnected'}")
+                    logger.info(f"Connected to {len(self.guilds)} guilds")
+                    
                 except Exception as e:
                     logger.error(f"Error in heartbeat: {str(e)}")
+                    await asyncio.sleep(5)
                     
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(30)  # Check every 30 seconds
                 
         except asyncio.CancelledError:
             logger.info("Heartbeat task cancelled")
         except Exception as e:
-            logger.error(f"Error in heartbeat task: {str(e)}")
+            logger.error(f"Critical error in heartbeat task: {str(e)}")
             if not self.is_closed():
                 self.create_background_task(self._heartbeat())
                 
@@ -164,9 +174,15 @@ class CryptoBot(commands.Bot):
         logger.info("Bot is shutting down...")
         try:
             # Cancel background tasks
-            for task in self._background_tasks:
-                task.cancel()
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            if hasattr(self, 'bg_task'):
+                self.bg_task.cancel()
+            if hasattr(self, 'presence_task'):
+                self.presence_task.cancel()
+            
+            # Close aiohttp sessions in cogs
+            for cog in self.cogs.values():
+                if hasattr(cog, 'session'):
+                    await cog.session.close()
             
             # Close Discord connection
             await super().close()
@@ -211,28 +227,32 @@ def get_token_info(query):
             'accept': 'application/json'
         }
 
-        # First try DEXScreener API
+        # Only search for Solana tokens
         dex_url = f"https://api.dexscreener.com/latest/dex/search?q={query}"
-        dex_response = requests.get(dex_url, headers=headers)
+        dex_response = requests.get(dex_url, headers=headers, timeout=10)
         dex_data = dex_response.json()
 
         if not dex_data.get('pairs') or len(dex_data['pairs']) == 0:
-            return f"Token '{query}' not found on DEXScreener."
+            return f"Token '{query}' not found on Solana DEXs."
+
+        # Filter only Solana pairs
+        solana_pairs = [p for p in dex_data['pairs'] if p.get('chainId') == 'solana']
+        if not solana_pairs:
+            return f"Token '{query}' not found on Solana DEXs."
 
         # Get the first pair with good liquidity
         pair = None
-        for p in dex_data['pairs']:
+        for p in solana_pairs:
             if float(p.get('liquidity', {}).get('usd', 0)) > 1000:  # Min $1000 liquidity
                 pair = p
                 break
         
         if not pair:
-            pair = dex_data['pairs'][0]  # Fallback to first pair if none with good liquidity
+            pair = solana_pairs[0]  # Fallback to first pair if none with good liquidity
 
         # Extract basic token info
         token_symbol = pair.get('baseToken', {}).get('symbol', '???')
-        chain = pair.get('chainId', 'unknown').upper()
-        dex_id = pair.get('dexId', 'Unknown')
+        dex_id = pair.get('dexId', 'Unknown').capitalize()
         contract = pair.get('baseToken', {}).get('address', '')
 
         # Calculate price and changes
@@ -265,31 +285,47 @@ def get_token_info(query):
             ath = float(pair['priceMax'])
             ath_change = ((price_usd - ath) / ath) * 100 if ath > 0 else 0
 
-        # Check for bundles
+        # Check for bundles with enhanced tracking
         bundles = []
+        bundle_history = []
         try:
-            if chain == "SOLANA":
-                birdeye_url = f"https://public-api.birdeye.so/public/bundle_history?address={contract}"
-                birdeye_headers = {
-                    'User-Agent': 'Mozilla/5.0',
-                    'accept': 'application/json'
-                }
-                birdeye_response = requests.get(birdeye_url, headers=birdeye_headers)
-                if birdeye_response.status_code == 200:
-                    bundle_data = birdeye_response.json()
-                    if bundle_data.get('success') and bundle_data.get('data'):
-                        for bundle in bundle_data['data']:
-                            if bundle.get('symbol') and bundle.get('percentage'):
-                                bundles.append(f"{bundle['symbol']}•{bundle['percentage']}%")
-                        bundles.sort(key=lambda x: float(x.split('•')[1].rstrip('%')), reverse=True)
+            # Get current bundles
+            birdeye_url = f"https://public-api.birdeye.so/public/bundle_history?address={contract}"
+            birdeye_response = requests.get(birdeye_url, headers=headers, timeout=10)
+            if birdeye_response.status_code == 200:
+                bundle_data = birdeye_response.json()
+                if bundle_data.get('success') and bundle_data.get('data'):
+                    # Track current bundles
+                    current_bundles = []
+                    for bundle in bundle_data['data']:
+                        if bundle.get('symbol') and bundle.get('percentage'):
+                            symbol = bundle['symbol']
+                            percentage = float(bundle['percentage'])
+                            current_bundles.append((symbol, percentage))
+                    
+                    # Sort by percentage and format
+                    current_bundles.sort(key=lambda x: x[1], reverse=True)
+                    bundles = [f"{symbol}•{percentage:.1f}%" for symbol, percentage in current_bundles]
+
+                    # Get historical bundle data
+                    history_url = f"https://public-api.birdeye.so/public/bundle_history_detail?address={contract}"
+                    history_response = requests.get(history_url, headers=headers, timeout=10)
+                    if history_response.status_code == 200:
+                        history_data = history_response.json()
+                        if history_data.get('success') and history_data.get('data'):
+                            for entry in history_data['data'][:3]:  # Get last 3 changes
+                                if entry.get('timestamp') and entry.get('percentage'):
+                                    time_diff = int((datetime.utcnow() - datetime.fromtimestamp(entry['timestamp'])).total_seconds() / 3600)
+                                    bundle_history.append(f"{entry['percentage']:.1f}% ({time_diff}h)")
+
         except Exception as e:
             logger.error(f"Error fetching bundle info: {str(e)}")
 
         # Format message
         message = [
             f"```ml",
-            f"{token_symbol} [{h24_change:+.1f}%] - {chain} ↗\n",
-            f"💰 {chain} @ {dex_id}",
+            f"{token_symbol} [{h24_change:+.1f}%] - SOL ↗\n",
+            f"💰 SOL @ {dex_id}",
             f"💵 USD: {price_str}"
         ]
 
@@ -302,7 +338,7 @@ def get_token_info(query):
                 mc_fdv.append(f"FDV: ${fdv/1e6:.1f}M")
             message.append(f"💎 {' • '.join(mc_fdv)}")
 
-        # Add ATH
+        # Add ATH if available
         if ath > 0:
             ath_str = f"${ath:.12f}" if ath < 0.000001 else f"${ath:.8f}"
             message.append(f"🏆 ATH: {ath_str} [{ath_change:.1f}%]")
@@ -329,32 +365,57 @@ def get_token_info(query):
             buy_percentage = (buys/total * 100) if total > 0 else 0
             message.append(f"🔄 TH: {buys}•{sells}•{total} [{buy_percentage:.0f}%]")
 
-        # Add bundles if available
+        # Enhanced bundle display
         if bundles:
             message.append(f"🎁 Bundles: {' • '.join(bundles)}")
+            if bundle_history:
+                message.append(f"📊 Bundle History: {' → '.join(bundle_history)}")
+
+        # Add Solana-specific info
+        try:
+            # Get token metadata from Birdeye
+            metadata_url = f"https://public-api.birdeye.so/public/token_metadata?address={contract}"
+            metadata_response = requests.get(metadata_url, headers=headers, timeout=10)
+            if metadata_response.status_code == 200:
+                metadata = metadata_response.json()
+                if metadata.get('success') and metadata.get('data'):
+                    token_data = metadata['data']
+                    
+                    # Add social links if available
+                    socials = []
+                    if token_data.get('twitter'):
+                        socials.append(f"Twitter")
+                    if token_data.get('discord'):
+                        socials.append(f"Discord")
+                    if token_data.get('telegram'):
+                        socials.append(f"Telegram")
+                    if token_data.get('website'):
+                        socials.append(f"Website")
+                    
+                    if socials:
+                        message.append(f"🔗 Links: {' • '.join(socials)}")
+
+        except Exception as e:
+            logger.error(f"Error fetching token metadata: {str(e)}")
 
         # Add contract
         message.append(f"\n{contract}\n")
 
-        # Add DEX links based on chain
-        if chain == "SOLANA":
-            message.extend([
-                "DEX•Birdeye•Jupiter•Raydium•Orca",
-                "Photon•BullX•DexLab•GooseFX"
-            ])
-        elif chain == "ETHEREUM":
-            message.extend([
-                "MAE•BAN•BNK•SHU•PEP•MVX•DEX",
-                "TRO•STB•PHO•BLX•GMG•EXP•TW"
-            ])
+        # Enhanced Solana DEX links with recommended
+        message.extend([
+            "🔍 Birdeye•Jupiter•Raydium•Orca",
+            "📊 DexLab•GooseFX•Aldrin•Phoenix"
+        ])
 
         message.append("```")
         return "\n".join(message)
 
     except requests.exceptions.RequestException as e:
+        logger.error(f"Network error: {str(e)}")
         return f"Network error while fetching token information. Please try again."
     except Exception as e:
-        return f"Error fetching token information: {str(e)}"
+        logger.error(f"Error: {str(e)}")
+        return f"Error fetching token information. Please try again."
 
 async def main():
     async with CryptoBot() as bot:
