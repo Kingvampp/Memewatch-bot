@@ -103,7 +103,7 @@ class CryptoBot(commands.Bot):
                 try:
                     activity = discord.Activity(
                         type=discord.ActivityType.watching,
-                        name="crypto charts | !analyze"
+                        name="tokens | $symbol"
                     )
                     await self.change_presence(
                         status=discord.Status.online,
@@ -247,13 +247,65 @@ def get_token_info(query):
         volume_h24 = float(pair.get('volume', {}).get('h24', 0))
         volume_h1 = float(pair.get('volume', {}).get('h1', 0))
 
+        # Calculate FDV and Market Cap
+        fdv = 0
+        market_cap = 0
+        total_supply = pair.get('baseToken', {}).get('totalSupply')
+        circulating_supply = pair.get('baseToken', {}).get('circulatingSupply', total_supply)
+        
+        if total_supply and price_usd:
+            fdv = float(total_supply) * price_usd
+        if circulating_supply and price_usd:
+            market_cap = float(circulating_supply) * price_usd
+
+        # Get ATH information
+        ath = 0
+        ath_change = 0
+        if pair.get('priceUsd') and pair.get('priceMax'):
+            ath = float(pair['priceMax'])
+            ath_change = ((price_usd - ath) / ath) * 100 if ath > 0 else 0
+
+        # Check for bundles
+        bundles = []
+        try:
+            if chain == "SOLANA":
+                birdeye_url = f"https://public-api.birdeye.so/public/bundle_history?address={contract}"
+                birdeye_headers = {
+                    'User-Agent': 'Mozilla/5.0',
+                    'accept': 'application/json'
+                }
+                birdeye_response = requests.get(birdeye_url, headers=birdeye_headers)
+                if birdeye_response.status_code == 200:
+                    bundle_data = birdeye_response.json()
+                    if bundle_data.get('success') and bundle_data.get('data'):
+                        for bundle in bundle_data['data']:
+                            if bundle.get('symbol') and bundle.get('percentage'):
+                                bundles.append(f"{bundle['symbol']}•{bundle['percentage']}%")
+                        bundles.sort(key=lambda x: float(x.split('•')[1].rstrip('%')), reverse=True)
+        except Exception as e:
+            logger.error(f"Error fetching bundle info: {str(e)}")
+
         # Format message
         message = [
             f"```ml",
             f"{token_symbol} [{h24_change:+.1f}%] - {chain} ↗\n",
             f"💰 {chain} @ {dex_id}",
-            f"💵 USD: {price_str}",
+            f"💵 USD: {price_str}"
         ]
+
+        # Add MC and FDV
+        if market_cap > 0 or fdv > 0:
+            mc_fdv = []
+            if market_cap > 0:
+                mc_fdv.append(f"MC: ${market_cap/1e6:.1f}M")
+            if fdv > 0:
+                mc_fdv.append(f"FDV: ${fdv/1e6:.1f}M")
+            message.append(f"💎 {' • '.join(mc_fdv)}")
+
+        # Add ATH
+        if ath > 0:
+            ath_str = f"${ath:.12f}" if ath < 0.000001 else f"${ath:.8f}"
+            message.append(f"🏆 ATH: {ath_str} [{ath_change:.1f}%]")
 
         # Add liquidity
         message.append(f"💧 Liq: ${liquidity:,.0f} [x{liq_ratio:.1f}]")
@@ -277,10 +329,14 @@ def get_token_info(query):
             buy_percentage = (buys/total * 100) if total > 0 else 0
             message.append(f"🔄 TH: {buys}•{sells}•{total} [{buy_percentage:.0f}%]")
 
-        # Add contract
-        message.append(f"\n{contract}")
+        # Add bundles if available
+        if bundles:
+            message.append(f"🎁 Bundles: {' • '.join(bundles)}")
 
-        # Add DEX links
+        # Add contract
+        message.append(f"\n{contract}\n")
+
+        # Add DEX links based on chain
         if chain == "SOLANA":
             message.extend([
                 "DEX•Birdeye•Jupiter•Raydium•Orca",
