@@ -341,45 +341,69 @@ def get_token_info(query):
             total = buys + sells
             buy_percentage = (buys/total * 100) if total > 0 else 0
 
+        # Format numbers with K, M, B suffixes
+        def format_number(num):
+            if num >= 1e9:
+                return f"${num/1e9:.1f}B"
+            elif num >= 1e6:
+                return f"${num/1e6:.1f}M"
+            elif num >= 1e3:
+                return f"${num/1e3:.1f}K"
+            return f"${num:.0f}"
+
         # Format message with ANSI colors and compact layout
-        message = [
-            f"\x1b[38;2;255;160;160m{token_symbol}\x1b[0m [{h24_change:+.1f}%] - \x1b[38;2;255;160;160mSOL\x1b[0m ↗",
-            f"💰 \x1b[38;2;255;160;160mSOL\x1b[0m @ \x1b[38;2;255;160;160m{dex_id}\x1b[0m",
-            f"💵 USD: \x1b[38;2;255;160;160m${price_str}\x1b[0m",
-            f"💎 MC: \x1b[38;2;255;160;160m${market_cap/1e6:.1f}M\x1b[0m • FDV: \x1b[38;2;255;160;160m${fdv/1e6:.1f}M\x1b[0m",
-            f"🏆 ATH: \x1b[38;2;255;160;160m${ath:.8f}\x1b[0m [{ath_change:.1f}%]",
-            f"💧 Liq: \x1b[38;2;255;160;160m${liquidity:,.0f}\x1b[0m [x{liq_ratio:.1f}]",
-            f"📊 Vol: \x1b[38;2;255;160;160m${volume_h24:,.0f}\x1b[0m ⏰ Age: \x1b[38;2;255;160;160m{hours_old}h\x1b[0m",
-            f"📈 1H: {h1_change:+.1f}% • \x1b[38;2;255;160;160m${volume_h1:,.0f}\x1b[0m",
-            f"🔄 TH: \x1b[38;2;255;160;160m{buys}\x1b[0m•\x1b[38;2;255;160;160m{sells}\x1b[0m•\x1b[38;2;255;160;160m{total}\x1b[0m [{buy_percentage:.0f}%]"
-        ]
+        message = []
+        
+        # Header
+        message.append(f"{token_symbol} [{h24_change:+.1f}%] - SOL ↗")
+        message.append("")  # Empty line for spacing
+        
+        # Main info
+        message.extend([
+            f"💰 SOL @ {dex_id}",
+            f"💵 USD: ${price_str}",
+            f"💎 MC: {format_number(market_cap)} • FDV: {format_number(fdv)}",
+            f"🏆 ATH: ${ath:.8f} [{ath_change:.1f}%]",
+            f"💧 Liq: {format_number(liquidity)} [x{liq_ratio:.1f}]",
+            f"📊 Vol: {format_number(volume_h24)} ⏰ Age: {hours_old}h",
+            f"📈 1H: {h1_change:+.1f}% • {format_number(volume_h1)}",
+            f"🔄 TH: {buys}•{sells}•{total} [{buy_percentage:.0f}%]"
+        ])
 
         # Add bundles if available
         if bundles:
             bundle_str = " • ".join(bundles)
-            message.append(f"🎁 Bundles: \x1b[38;2;255;160;160m{bundle_str}\x1b[0m")
+            message.append(f"🎁 Bundles: {bundle_str}")
 
-        # Add contract
-        message.append(f"\n\x1b[38;2;255;160;160m{contract}\x1b[0m")
-
-        # Add DEX links inside the code block
+        # Add contract and DEX links
         message.extend([
-            f"\x1b[38;2;255;160;160mDEX\x1b[0m•\x1b[38;2;255;160;160mBirdeye\x1b[0m•\x1b[38;2;255;160;160mJupiter\x1b[0m•\x1b[38;2;255;160;160mRaydium\x1b[0m",
-            f"\x1b[38;2;255;160;160mPhoton\x1b[0m•\x1b[38;2;255;160;160mBullX\x1b[0m•\x1b[38;2;255;160;160mDexLab\x1b[0m"
+            "",  # Empty line for spacing
+            contract,
+            "",  # Empty line for spacing
+            "DEX•Birdeye•Jupiter•Raydium",
+            "Photon•BullX•DexLab"
         ])
 
-        # Join with newlines and wrap in code block
-        formatted_message = "```ansi\n" + "\n".join(message) + "\n```"
+        # Color the entire message
+        colored_message = []
+        for line in message:
+            if line and not line.isspace():
+                colored_message.append(f"\x1b[38;2;255;160;160m{line}\x1b[0m")
+            else:
+                colored_message.append(line)
 
-        # Add hidden clickable links after the code block
+        # Join with newlines and wrap in code block
+        formatted_message = "```ansi\n" + "\n".join(colored_message) + "\n```"
+
+        # Add clickable links
         formatted_message += (
-            f"||DEX: <https://dexscreener.com/solana/{contract}>\n"
-            f"Birdeye: <https://birdeye.so/token/{contract}>\n"
-            f"Jupiter: <https://jup.ag/swap/{contract}>\n"
-            f"Raydium: <https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract}>\n"
-            f"Photon: <https://photon.rs/token/{contract}>\n"
-            f"BullX: <https://bullx.io/trade/{contract}>\n"
-            f"DexLab: <https://trade.dexlab.space/#/market/{contract}>||"
+            f"[DEX](<https://dexscreener.com/solana/{contract}>) • "
+            f"[Birdeye](<https://birdeye.so/token/{contract}>) • "
+            f"[Jupiter](<https://jup.ag/swap/{contract}>) • "
+            f"[Raydium](<https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract}>)\n"
+            f"[Photon](<https://photon.rs/token/{contract}>) • "
+            f"[BullX](<https://bullx.io/trade/{contract}>) • "
+            f"[DexLab](<https://trade.dexlab.space/#/market/{contract}>)"
         )
 
         return formatted_message
