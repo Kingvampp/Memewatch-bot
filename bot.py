@@ -361,12 +361,23 @@ def get_token_info(query):
         # Add contract and DEX links
         message.extend([
             f"\n\x1b[38;2;255;160;160m{contract}\x1b[0m\n",
-            f"DEX•\x1b[38;2;255;160;160mBirdeye\x1b[0m•\x1b[38;2;255;160;160mJupiter\x1b[0m•\x1b[38;2;255;160;160mRaydium\x1b[0m•\x1b[38;2;255;160;160mOrca\x1b[0m",
-            f"Photon•\x1b[38;2;255;160;160mBullX\x1b[0m•\x1b[38;2;255;160;160mDexLab\x1b[0m•\x1b[38;2;255;160;160mGooseFX\x1b[0m"
         ])
 
         # Join with newlines and wrap in code block with ANSI support
-        return "```ansi\n" + "\n".join(message) + "\n```"
+        formatted_message = "```ansi\n" + "\n".join(message) + "\n```"
+
+        # Add clickable DEX links
+        formatted_message += (
+            f"[DEX](https://dexscreener.com/solana/{contract}) • "
+            f"[Birdeye](https://birdeye.so/token/{contract}) • "
+            f"[Jupiter](https://jup.ag/swap/{contract}) • "
+            f"[Raydium](https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract})\n"
+            f"[Photon](https://photon.rs/token/{contract}) • "
+            f"[BullX](https://bullx.io/trade/{contract}) • "
+            f"[DexLab](https://trade.dexlab.space/#/market/{contract})"
+        )
+
+        return formatted_message
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Network error: {str(e)}")
