@@ -61,10 +61,12 @@ class CryptoBot(commands.Bot):
         logger.info("Setting up bot hooks...")
         try:
             # Load all cogs
-            await self.load_extension("cogs.analyzer")
-            await self.load_extension("cogs.security")
-            await self.load_extension("cogs.solana")
-            logger.info("Loaded all cogs successfully")
+            for cog in ['analyzer', 'security', 'solana']:
+                try:
+                    await self.load_extension(f"cogs.{cog}")
+                    logger.info(f"Loaded {cog} cog successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load {cog} cog: {str(e)}")
             
             # Start background tasks
             self.bg_task = self.loop.create_task(self._heartbeat())
@@ -321,19 +323,47 @@ def get_token_info(query):
         except Exception as e:
             logger.error(f"Error fetching bundle info: {str(e)}")
 
-        # Format message with ANSI colors
+        # Get age of token
+        hours_old = 0
+        if pair.get('pairCreatedAt'):
+            created_at = datetime.fromtimestamp(int(pair['pairCreatedAt'])/1000)
+            hours_old = int((datetime.utcnow() - created_at).total_seconds() / 3600)
+
+        # Get trading history
+        buys = 0
+        sells = 0
+        total = 0
+        buy_percentage = 0
+        if pair.get('txns'):
+            buys = pair['txns'].get('h24', {}).get('buys', 0)
+            sells = pair['txns'].get('h24', {}).get('sells', 0)
+            total = buys + sells
+            buy_percentage = (buys/total * 100) if total > 0 else 0
+
+        # Format message with ANSI colors and compact layout
         message = [
             f"\x1b[38;2;255;160;160m{token_symbol}\x1b[0m [{h24_change:+.1f}%] - \x1b[38;2;255;160;160mSOL\x1b[0m ↗\n",
             f"💰 \x1b[38;2;255;160;160mSOL\x1b[0m @ \x1b[38;2;255;160;160m{dex_id}\x1b[0m",
             f"💵 USD: \x1b[38;2;255;160;160m${price_str}\x1b[0m",
+            f"💎 MC: \x1b[38;2;255;160;160m${market_cap/1e6:.1f}M\x1b[0m • FDV: \x1b[38;2;255;160;160m${fdv/1e6:.1f}M\x1b[0m",
+            f"🏆 ATH: \x1b[38;2;255;160;160m${ath:.8f}\x1b[0m [{ath_change:.1f}%]",
             f"💧 Liq: \x1b[38;2;255;160;160m${liquidity:,.0f}\x1b[0m [x{liq_ratio:.1f}]",
             f"📊 Vol: \x1b[38;2;255;160;160m${volume_h24:,.0f}\x1b[0m ⏰ Age: \x1b[38;2;255;160;160m{hours_old}h\x1b[0m",
             f"📈 1H: {h1_change:+.1f}% • \x1b[38;2;255;160;160m${volume_h1:,.0f}\x1b[0m",
-            f"🔄 TH: \x1b[38;2;255;160;160m{buys}\x1b[0m•\x1b[38;2;255;160;160m{sells}\x1b[0m•\x1b[38;2;255;160;160m{total}\x1b[0m [{buy_percentage:.0f}%]",
-            f"\n\x1b[38;2;255;160;160m{contract}\x1b[0m\n",
-            f"🔍 \x1b[38;2;255;160;160mBirdeye\x1b[0m•\x1b[38;2;255;160;160mJupiter\x1b[0m•\x1b[38;2;255;160;160mRaydium\x1b[0m•\x1b[38;2;255;160;160mOrca\x1b[0m",
-            f"📊 \x1b[38;2;255;160;160mDexLab\x1b[0m•\x1b[38;2;255;160;160mGooseFX\x1b[0m•\x1b[38;2;255;160;160mAldrin\x1b[0m•\x1b[38;2;255;160;160mPhoenix\x1b[0m"
+            f"🔄 TH: \x1b[38;2;255;160;160m{buys}\x1b[0m•\x1b[38;2;255;160;160m{sells}\x1b[0m•\x1b[38;2;255;160;160m{total}\x1b[0m [{buy_percentage:.0f}%]"
         ]
+
+        # Add bundles if available
+        if bundles:
+            bundle_str = " • ".join(bundles)
+            message.append(f"🎁 Bundles: \x1b[38;2;255;160;160m{bundle_str}\x1b[0m")
+
+        # Add contract and DEX links
+        message.extend([
+            f"\n\x1b[38;2;255;160;160m{contract}\x1b[0m\n",
+            f"DEX•\x1b[38;2;255;160;160mBirdeye\x1b[0m•\x1b[38;2;255;160;160mJupiter\x1b[0m•\x1b[38;2;255;160;160mRaydium\x1b[0m•\x1b[38;2;255;160;160mOrca\x1b[0m",
+            f"Photon•\x1b[38;2;255;160;160mBullX\x1b[0m•\x1b[38;2;255;160;160mDexLab\x1b[0m•\x1b[38;2;255;160;160mGooseFX\x1b[0m"
+        ])
 
         # Join with newlines and wrap in code block with ANSI support
         return "```ansi\n" + "\n".join(message) + "\n```"
