@@ -146,4 +146,4 @@ class SecurityCog(commands.Cog):
         self.bot.loop.create_task(self.session.close())
 
 async def setup(bot):
-    await bot.add_cog(SecurityCog(bot)) 
+    await bot.add_cog(SecurityCog(bot))

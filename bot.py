@@ -7,10 +7,9 @@ import asyncio
 import traceback
 from discord.ext import commands
 from dotenv import load_dotenv
-from cogs.analyzer import AnalyzerCog
-import requests
+import aiohttp
 from datetime import datetime
-import re  # Add this import for regex
+import re
 
 # Configure logging
 logger = logging.getLogger('bot')
@@ -43,13 +42,33 @@ if not DISCORD_TOKEN:
     logger.error("No Discord token found in environment variables")
     exit(1)
 
-CLAUDE_API_KEY = os.getenv('CLAUDE_API_KEY')
-
-class CryptoBot(commands.Bot):
+class MemecoinBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.all()
-        super().__init__(command_prefix='$', intents=intents)
-        self._background_tasks = set()
+        """Initialize the bot with intents and command prefix"""
+        intents = discord.Intents.default()
+        intents.message_content = True
+        
+        # Set command prefix and activity
+        activity = discord.Activity(
+            type=discord.ActivityType.watching,
+            name="tokens | $symbol"
+        )
+            
+        super().__init__(
+            command_prefix='$',
+            intents=intents,
+            activity=activity
+        )
+        
+        # Store activity for presence refresh
+        self.activity = activity
+        
+        # Initialize logger
+        self.logger = logging.getLogger('bot')
+        
+        # Initialize background tasks
+        self.bg_task = None
+        self.presence_task = None
         
     def create_background_task(self, coro):
         task = asyncio.create_task(coro)
@@ -58,15 +77,13 @@ class CryptoBot(commands.Bot):
         return task
         
     async def setup_hook(self):
-        logger.info("Setting up bot hooks...")
+        """Called before the bot starts running"""
+        logger.info("Setting up Memecoin bot hooks...")
         try:
-            # Load all cogs
-            for cog in ['analyzer', 'security', 'solana']:
-                try:
-                    await self.load_extension(f"cogs.{cog}")
-                    logger.info(f"Loaded {cog} cog successfully")
-                except Exception as e:
-                    logger.error(f"Failed to load {cog} cog: {str(e)}")
+            # Load cogs
+            await self.load_extension("cogs.security")
+            await self.load_extension("cogs.solana")
+            logger.info("Loaded cogs for Memecoin bot")
             
             # Start background tasks
             self.bg_task = self.loop.create_task(self._heartbeat())
@@ -91,43 +108,46 @@ class CryptoBot(commands.Bot):
 
     async def on_ready(self):
         """Called when the bot is ready and connected to Discord"""
-        logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
-        
         try:
-            # Set initial presence
-            activity = discord.Activity(
-                type=discord.ActivityType.watching,
-                name="memecoin prices | $symbol"
-            )
+            # Update username if needed
+            if self.user.name != "Memecoin bot":
+                try:
+                    await self.user.edit(username="Memecoin bot")
+                    logger.info("Updated bot username to Memecoin bot")
+                except discord.HTTPException as e:
+                    logger.error(f"Failed to update username: {str(e)}")
+            
+            # Set presence
             await self.change_presence(
                 status=discord.Status.online,
-                activity=activity
+                activity=self.activity
             )
+            
+            logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
             logger.info("Set initial presence")
             
         except Exception as e:
-            logger.error(f"Error setting presence: {str(e)}")
+            logger.error(f"Error in on_ready: {str(e)}")
             logger.error(traceback.format_exc())
             
     async def _refresh_presence(self):
-        """Task to periodically refresh bot's presence"""
+        """Refresh bot presence periodically"""
         await self.wait_until_ready()
         try:
             while not self.is_closed():
                 try:
-                    activity = discord.Activity(
-                        type=discord.ActivityType.watching,
-                        name="tokens | $symbol"
-                    )
-                    await self.change_presence(
-                        status=discord.Status.online,
-                        activity=activity
-                    )
-                    logger.info("Refreshed bot presence")
+                    # Only update if connected
+                    ws = self._connection._get_websocket(None)
+                    if ws is not None and not ws._closed:
+                        await self.change_presence(
+                            status=discord.Status.online,
+                            activity=self.activity
+                        )
+                        logger.info("Refreshed Memecoin bot presence")
                 except Exception as e:
                     logger.error(f"Error refreshing presence: {str(e)}")
                 
-                await asyncio.sleep(300)  # Refresh every 5 minutes
+                await asyncio.sleep(300)
                 
         except asyncio.CancelledError:
             logger.info("Presence refresh task cancelled")
@@ -137,37 +157,34 @@ class CryptoBot(commands.Bot):
                 self.create_background_task(self._refresh_presence())
                 
     async def _heartbeat(self):
-        """Task to monitor bot's connection status"""
+        """Monitor bot connection status"""
         await self.wait_until_ready()
         try:
             while not self.is_closed():
                 try:
-                    # Check WebSocket connection
-                    if not self.ws or self.ws.closed:
-                        logger.warning("WebSocket disconnected, attempting to reconnect...")
+                    # Check if websocket exists and is connected
+                    ws = self._connection._get_websocket(None)
+                    if ws is not None and not ws._closed:
+                        logger.info("Memecoin bot heartbeat ok")
+                    else:
+                        logger.warning("Memecoin bot connection issues detected")
+                        # Try to reconnect
                         try:
                             await self.close()
-                            await asyncio.sleep(5)  # Wait before reconnecting
                             await self.start(DISCORD_TOKEN)
+                            logger.info("Memecoin bot reconnected successfully")
                         except Exception as e:
                             logger.error(f"Failed to reconnect: {str(e)}")
-                            await asyncio.sleep(30)  # Wait longer before next attempt
-                            continue
-                    
-                    # Log connection status
-                    logger.info(f"Bot is {'connected' if self.is_ready() else 'disconnected'}")
-                    logger.info(f"Connected to {len(self.guilds)} guilds")
-                    
+                            
                 except Exception as e:
                     logger.error(f"Error in heartbeat: {str(e)}")
-                    await asyncio.sleep(5)
                     
-                await asyncio.sleep(30)  # Check every 30 seconds
+                await asyncio.sleep(30)
                 
         except asyncio.CancelledError:
             logger.info("Heartbeat task cancelled")
         except Exception as e:
-            logger.error(f"Critical error in heartbeat task: {str(e)}")
+            logger.error(f"Error in heartbeat task: {str(e)}")
             if not self.is_closed():
                 self.create_background_task(self._heartbeat())
                 
@@ -194,6 +211,7 @@ class CryptoBot(commands.Bot):
             logger.error(traceback.format_exc())
 
     async def on_message(self, message):
+        """Handle incoming messages"""
         # Ignore messages from the bot itself
         if message.author == self.user:
             return
@@ -201,19 +219,32 @@ class CryptoBot(commands.Bot):
         # Get the message content
         content = message.content.strip()
 
-        # Handle token lookups
-        if content.startswith('$') or is_contract_address(content):
-            query = content[1:].strip() if content.startswith('$') else content
-            if query:
-                async with message.channel.typing():
-                    response = get_token_info(query)
-                    # Send message with suppress_embeds=True to prevent auto-embedding
-                    await message.channel.send(response, suppress_embeds=True)
-            else:
-                await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `$0x...`")
-        
-        # Make sure to process commands from AnalyzerCog
-        await self.process_commands(message)
+        try:
+            # Skip if message starts with @
+            if content.startswith('@'):
+                return
+                
+            # Process $ commands and contract addresses
+            if content.startswith('$') or is_contract_address(content):
+                # Check if we've already processed this message
+                if hasattr(message, 'processed_by_memecoin'):
+                    return
+                
+                # Mark message as processed
+                setattr(message, 'processed_by_memecoin', True)
+                
+                logger.info(f"Memecoin bot processing token query: {content}")
+                query = content[1:].strip() if content.startswith('$') else content
+                if query:
+                    async with message.channel.typing():
+                        embed = await get_token_info(query)
+                        await message.channel.send(embed=embed)
+                else:
+                    await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `$0x...`")
+
+        except Exception as e:
+            logger.error(f"Error in message handler: {str(e)}")
+            logger.error(traceback.format_exc())
 
 def is_contract_address(text):
     # ETH address pattern
@@ -223,200 +254,146 @@ def is_contract_address(text):
     
     return bool(re.match(eth_pattern, text)) or bool(re.match(sol_pattern, text))
 
-def get_token_info(query):
+async def get_token_info(query):
+    """Get token information from DEXScreener API"""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0',
-            'accept': 'application/json'
-        }
-
-        # Only search for Solana tokens
+        # First try DEXScreener API for Solana tokens
         dex_url = f"https://api.dexscreener.com/latest/dex/search?q={query}"
-        dex_response = requests.get(dex_url, headers=headers, timeout=10)
-        dex_data = dex_response.json()
-
-        if not dex_data.get('pairs') or len(dex_data['pairs']) == 0:
-            return f"Token '{query}' not found on Solana DEXs."
-
-        # Filter only Solana pairs
-        solana_pairs = [p for p in dex_data['pairs'] if p.get('chainId') == 'solana']
+        async with aiohttp.ClientSession() as session:
+            async with session.get(dex_url, timeout=10) as response:
+                dex_data = await response.json()
+        
+        # Filter for Solana pairs only
+        solana_pairs = [p for p in dex_data.get('pairs', []) if p.get('chainId') == 'solana']
         if not solana_pairs:
-            return f"Token '{query}' not found on Solana DEXs."
-
-        # Get the first pair with good liquidity
-        pair = None
-        for p in solana_pairs:
-            if float(p.get('liquidity', {}).get('usd', 0)) > 1000:  # Min $1000 liquidity
-                pair = p
-                break
-        
+            return discord.Embed(title="Error", description=f"Token not found on Solana DEXs: {query}", color=discord.Color.red())
+            
+        # Get the first pair with data
+        pair = solana_pairs[0]
         if not pair:
-            pair = solana_pairs[0]  # Fallback to first pair if none with good liquidity
-
-        # Extract basic token info
-        token_symbol = pair.get('baseToken', {}).get('symbol', '???')
-        dex_id = pair.get('dexId', 'Unknown').capitalize()
+            return discord.Embed(title="Error", description="No data available for this token", color=discord.Color.red())
+            
+        # Extract basic info
+        symbol = pair.get('baseToken', {}).get('symbol', 'Unknown')
         contract = pair.get('baseToken', {}).get('address', '')
-
-        # Calculate price and changes
         price_usd = float(pair.get('priceUsd', 0))
-        price_str = f"${price_usd:.12f}" if price_usd < 0.000001 else f"${price_usd:.8f}"
-        h24_change = float(pair.get('priceChange', {}).get('h24', 0))
-        h1_change = float(pair.get('priceChange', {}).get('h1', 0))
-
-        # Get liquidity and volume
-        liquidity = float(pair.get('liquidity', {}).get('usd', 0))
-        liq_ratio = float(pair.get('liquidity', {}).get('ratio', 0))
-        volume_h24 = float(pair.get('volume', {}).get('h24', 0))
-        volume_h1 = float(pair.get('volume', {}).get('h1', 0))
-
-        # Calculate FDV and Market Cap
-        fdv = 0
-        market_cap = 0
+        price_change = float(pair.get('priceChange', {}).get('h24', 0))
+        
+        # Calculate market metrics
         total_supply = pair.get('baseToken', {}).get('totalSupply')
-        circulating_supply = pair.get('baseToken', {}).get('circulatingSupply', total_supply)
+        circulating_supply = pair.get('baseToken', {}).get('circulatingSupply')
         
-        if total_supply and price_usd:
-            fdv = float(total_supply) * price_usd
+        market_cap = 0
+        fdv = 0
+        
         if circulating_supply and price_usd:
-            market_cap = float(circulating_supply) * price_usd
-
-        # Get ATH information
-        ath = 0
-        ath_change = 0
-        if pair.get('priceUsd') and pair.get('priceMax'):
-            ath = float(pair['priceMax'])
-            ath_change = ((price_usd - ath) / ath) * 100 if ath > 0 else 0
-
-        # Check for bundles with enhanced tracking
-        bundles = []
-        bundle_history = []
-        try:
-            # Get current bundles
-            birdeye_url = f"https://public-api.birdeye.so/public/bundle_history?address={contract}"
-            birdeye_response = requests.get(birdeye_url, headers=headers, timeout=10)
-            if birdeye_response.status_code == 200:
-                bundle_data = birdeye_response.json()
-                if bundle_data.get('success') and bundle_data.get('data'):
-                    # Track current bundles
-                    current_bundles = []
-                    for bundle in bundle_data['data']:
-                        if bundle.get('symbol') and bundle.get('percentage'):
-                            symbol = bundle['symbol']
-                            percentage = float(bundle['percentage'])
-                            current_bundles.append((symbol, percentage))
-                    
-                    # Sort by percentage and format
-                    current_bundles.sort(key=lambda x: x[1], reverse=True)
-                    bundles = [f"{symbol}•{percentage:.1f}%" for symbol, percentage in current_bundles]
-
-                    # Get historical bundle data
-                    history_url = f"https://public-api.birdeye.so/public/bundle_history_detail?address={contract}"
-                    history_response = requests.get(history_url, headers=headers, timeout=10)
-                    if history_response.status_code == 200:
-                        history_data = history_response.json()
-                        if history_data.get('success') and history_data.get('data'):
-                            for entry in history_data['data'][:3]:  # Get last 3 changes
-                                if entry.get('timestamp') and entry.get('percentage'):
-                                    time_diff = int((datetime.utcnow() - datetime.fromtimestamp(entry['timestamp'])).total_seconds() / 3600)
-                                    bundle_history.append(f"{entry['percentage']:.1f}% ({time_diff}h)")
-
-        except Exception as e:
-            logger.error(f"Error fetching bundle info: {str(e)}")
-
-        # Get age of token
-        hours_old = 0
-        if pair.get('pairCreatedAt'):
-            created_at = datetime.fromtimestamp(int(pair['pairCreatedAt'])/1000)
-            hours_old = int((datetime.utcnow() - created_at).total_seconds() / 3600)
-
+            try:
+                market_cap = float(circulating_supply) * price_usd
+            except:
+                market_cap = 0
+                
+        if total_supply and price_usd:
+            try:
+                fdv = float(total_supply) * price_usd
+            except:
+                fdv = 0
+            
+        # Get liquidity and volume
+        liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
+        volume_usd = float(pair.get('volume', {}).get('h24', 0))
+        
+        # Calculate age
+        created_at = pair.get('pairCreatedAt')
+        if created_at:
+            created_date = datetime.fromtimestamp(int(created_at)/1000)
+            age_hours = (datetime.now() - created_date).total_seconds() / 3600
+        else:
+            age_hours = 0
+            
         # Get trading history
-        buys = 0
-        sells = 0
-        total = 0
-        buy_percentage = 0
-        if pair.get('txns'):
-            buys = pair['txns'].get('h24', {}).get('buys', 0)
-            sells = pair['txns'].get('h24', {}).get('sells', 0)
-            total = buys + sells
-            buy_percentage = (buys/total * 100) if total > 0 else 0
-
-        # Format numbers with K, M, B suffixes
+        txns = pair.get('txns', {}).get('h24', {})
+        buys = int(txns.get('buys', 0))
+        sells = int(txns.get('sells', 0))
+        total_txns = buys + sells
+        buy_ratio = (buys / total_txns * 100) if total_txns > 0 else 0
+        
+        # Format numbers
         def format_number(num):
-            if num >= 1e9:
-                return f"${num/1e9:.1f}B"
-            elif num >= 1e6:
-                return f"${num/1e6:.1f}M"
-            elif num >= 1e3:
-                return f"${num/1e3:.1f}K"
-            return f"${num:.0f}"
-
-        # Format message with ANSI colors and compact layout
-        message = []
-        
-        # Header
-        message.append(f"{token_symbol} [{h24_change:+.1f}%] - SOL ↗")
-        message.append("")  # Empty line for spacing
-        
-        # Main info
-        message.extend([
-            f"💰 SOL @ {dex_id}",
-            f"💵 USD: ${price_str}",
-            f"💎 MC: {format_number(market_cap)} • FDV: {format_number(fdv)}",
-            f"🏆 ATH: ${ath:.8f} [{ath_change:.1f}%]",
-            f"💧 Liq: {format_number(liquidity)} [x{liq_ratio:.1f}]",
-            f"📊 Vol: {format_number(volume_h24)} ⏰ Age: {hours_old}h",
-            f"📈 1H: {h1_change:+.1f}% • {format_number(volume_h1)}",
-            f"🔄 TH: {buys}•{sells}•{total} [{buy_percentage:.0f}%]"
-        ])
-
-        # Add bundles if available
-        if bundles:
-            bundle_str = " • ".join(bundles)
-            message.append(f"🎁 Bundles: {bundle_str}")
-
-        # Add contract and DEX links
-        message.extend([
-            "",  # Empty line for spacing
-            contract,
-            "",  # Empty line for spacing
-            "DEX•Birdeye•Jupiter•Raydium",
-            "Photon•BullX•DexLab"
-        ])
-
-        # Color the entire message
-        colored_message = []
-        for line in message:
-            if line and not line.isspace():
-                colored_message.append(f"\x1b[38;2;255;160;160m{line}\x1b[0m")
+            if num == 0:
+                return "?"
+            if num >= 1_000_000_000:
+                return f"{num/1_000_000_000:.1f}B"
+            elif num >= 1_000_000:
+                return f"{num/1_000_000:.1f}M"
+            elif num >= 1_000:
+                return f"{num/1_000:.1f}K"
             else:
-                colored_message.append(line)
-
-        # Join with newlines and wrap in code block
-        formatted_message = "```ansi\n" + "\n".join(colored_message) + "\n```"
-
-        # Add clickable links
-        formatted_message += (
-            f"[DEX](<https://dexscreener.com/solana/{contract}>) • "
-            f"[Birdeye](<https://birdeye.so/token/{contract}>) • "
-            f"[Jupiter](<https://jup.ag/swap/{contract}>) • "
-            f"[Raydium](<https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract}>)\n"
-            f"[Photon](<https://photon.rs/token/{contract}>) • "
-            f"[BullX](<https://bullx.io/trade/{contract}>) • "
-            f"[DexLab](<https://trade.dexlab.space/#/market/{contract}>)"
+                return f"{num:.1f}"
+                
+        # Create embed
+        color = discord.Color.green() if price_change > 0 else discord.Color.red()
+        embed = discord.Embed(
+            title=f"{symbol} {'↗' if price_change > 0 else '↘'}",
+            description=f"24h Change: {price_change:+.1f}%",
+            color=color
+        )
+        
+        # Format price based on size
+        if price_usd < 0.00001:
+            price_str = f"${price_usd:.12f}"
+        elif price_usd < 0.0001:
+            price_str = f"${price_usd:.10f}"
+        elif price_usd < 0.001:
+            price_str = f"${price_usd:.8f}"
+        else:
+            price_str = f"${price_usd:.6f}"
+            
+        embed.add_field(name="💵 Price", value=price_str, inline=True)
+        
+        # Market metrics
+        mc_str = format_number(market_cap)
+        fdv_str = format_number(fdv)
+        embed.add_field(name="💎 Market Cap", value=f"${mc_str}", inline=True)
+        embed.add_field(name="💫 FDV", value=f"${fdv_str}", inline=True)
+            
+        # Liquidity and volume
+        liq_str = format_number(liquidity_usd)
+        vol_str = format_number(volume_usd)
+        embed.add_field(name="💧 Liquidity", value=f"${liq_str}", inline=True)
+        embed.add_field(name="📊 Volume (24h)", value=f"${vol_str}", inline=True)
+        
+        if age_hours > 0:
+            embed.add_field(name="⏰ Age", value=f"{int(age_hours)}h", inline=True)
+            
+        if total_txns > 0:
+            embed.add_field(
+                name="🔄 Transactions (24h)", 
+                value=f"Buys: {buys}\nSells: {sells}\nTotal: {total_txns}\nBuy Ratio: {buy_ratio:.0f}%",
+                inline=False
+            )
+            
+        # Add links
+        links = [
+            f"[Birdeye](https://birdeye.so/token/{contract})",
+            f"[Jupiter](https://jup.ag/swap/{contract})",
+            f"[Raydium](https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract})",
+            f"[DexLab](https://trade.dexlab.space/#/market/{contract})"
+        ]
+        embed.add_field(name="🔗 Links", value=" • ".join(links), inline=False)
+        
+        return embed
+        
+    except Exception as e:
+        logger.error(f"Error getting token info: {str(e)}")
+        logger.error(traceback.format_exc())
+        return discord.Embed(
+            title="Error",
+            description=f"Error fetching token information: {str(e)}",
+            color=discord.Color.red()
         )
 
-        return formatted_message
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Network error: {str(e)}")
-        return f"Network error while fetching token information. Please try again."
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        return f"Error fetching token information. Please try again."
-
 async def main():
-    async with CryptoBot() as bot:
+    async with MemecoinBot() as bot:
         await bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
