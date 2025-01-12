@@ -343,7 +343,7 @@ def get_token_info(query):
 
         # Format message with ANSI colors and compact layout
         message = [
-            f"\x1b[38;2;255;160;160m{token_symbol}\x1b[0m [{h24_change:+.1f}%] - \x1b[38;2;255;160;160mSOL\x1b[0m ↗\n",
+            f"\x1b[38;2;255;160;160m{token_symbol}\x1b[0m [{h24_change:+.1f}%] - \x1b[38;2;255;160;160mSOL\x1b[0m ↗",
             f"💰 \x1b[38;2;255;160;160mSOL\x1b[0m @ \x1b[38;2;255;160;160m{dex_id}\x1b[0m",
             f"💵 USD: \x1b[38;2;255;160;160m${price_str}\x1b[0m",
             f"💎 MC: \x1b[38;2;255;160;160m${market_cap/1e6:.1f}M\x1b[0m • FDV: \x1b[38;2;255;160;160m${fdv/1e6:.1f}M\x1b[0m",
@@ -359,24 +359,27 @@ def get_token_info(query):
             bundle_str = " • ".join(bundles)
             message.append(f"🎁 Bundles: \x1b[38;2;255;160;160m{bundle_str}\x1b[0m")
 
-        # Add contract and DEX links
+        # Add contract
+        message.append(f"\n\x1b[38;2;255;160;160m{contract}\x1b[0m")
+
+        # Add DEX links inside the code block
         message.extend([
-            f"\n\x1b[38;2;255;160;160m{contract}\x1b[0m\n",
+            f"\x1b[38;2;255;160;160mDEX\x1b[0m•\x1b[38;2;255;160;160mBirdeye\x1b[0m•\x1b[38;2;255;160;160mJupiter\x1b[0m•\x1b[38;2;255;160;160mRaydium\x1b[0m",
+            f"\x1b[38;2;255;160;160mPhoton\x1b[0m•\x1b[38;2;255;160;160mBullX\x1b[0m•\x1b[38;2;255;160;160mDexLab\x1b[0m"
         ])
 
-        # Join with newlines and wrap in code block with ANSI support
+        # Join with newlines and wrap in code block
         formatted_message = "```ansi\n" + "\n".join(message) + "\n```"
 
-        # Add clickable DEX links
+        # Add hidden clickable links after the code block
         formatted_message += (
-            "\n"  # Add a newline for separation
-            f"[DEX](<https://dexscreener.com/solana/{contract}>) • "
-            f"[Birdeye](<https://birdeye.so/token/{contract}>) • "
-            f"[Jupiter](<https://jup.ag/swap/{contract}>) • "
-            f"[Raydium](<https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract}>)\n"
-            f"[Photon](<https://photon.rs/token/{contract}>) • "
-            f"[BullX](<https://bullx.io/trade/{contract}>) • "
-            f"[DexLab](<https://trade.dexlab.space/#/market/{contract}>)"
+            f"||DEX: <https://dexscreener.com/solana/{contract}>\n"
+            f"Birdeye: <https://birdeye.so/token/{contract}>\n"
+            f"Jupiter: <https://jup.ag/swap/{contract}>\n"
+            f"Raydium: <https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract}>\n"
+            f"Photon: <https://photon.rs/token/{contract}>\n"
+            f"BullX: <https://bullx.io/trade/{contract}>\n"
+            f"DexLab: <https://trade.dexlab.space/#/market/{contract}>||"
         )
 
         return formatted_message
