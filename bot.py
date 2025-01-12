@@ -207,7 +207,8 @@ class CryptoBot(commands.Bot):
             if query:
                 async with message.channel.typing():
                     response = get_token_info(query)
-                    await message.channel.send(response)
+                    # Send message with suppress_embeds=True to prevent auto-embedding
+                    await message.channel.send(response, suppress_embeds=True)
             else:
                 await message.channel.send("Please provide a token name or contract address. Example: `$pepe` or `$0x...`")
         
@@ -368,13 +369,14 @@ def get_token_info(query):
 
         # Add clickable DEX links
         formatted_message += (
-            f"[DEX](https://dexscreener.com/solana/{contract}) • "
-            f"[Birdeye](https://birdeye.so/token/{contract}) • "
-            f"[Jupiter](https://jup.ag/swap/{contract}) • "
-            f"[Raydium](https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract})\n"
-            f"[Photon](https://photon.rs/token/{contract}) • "
-            f"[BullX](https://bullx.io/trade/{contract}) • "
-            f"[DexLab](https://trade.dexlab.space/#/market/{contract})"
+            "\n"  # Add a newline for separation
+            f"[DEX](<https://dexscreener.com/solana/{contract}>) • "
+            f"[Birdeye](<https://birdeye.so/token/{contract}>) • "
+            f"[Jupiter](<https://jup.ag/swap/{contract}>) • "
+            f"[Raydium](<https://raydium.io/swap/?inputCurrency=sol&outputCurrency={contract}>)\n"
+            f"[Photon](<https://photon.rs/token/{contract}>) • "
+            f"[BullX](<https://bullx.io/trade/{contract}>) • "
+            f"[DexLab](<https://trade.dexlab.space/#/market/{contract}>)"
         )
 
         return formatted_message
