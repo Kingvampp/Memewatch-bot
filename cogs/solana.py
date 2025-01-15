@@ -3,6 +3,7 @@ from discord.ext import commands
 import logging
 import aiohttp
 import json
+from datetime import datetime, timezone
 
 class Solana(commands.Cog):
     def __init__(self, bot):
@@ -27,6 +28,14 @@ class Solana(commands.Cog):
             return f"${price:.6f}"
         else:
             return f"${price:.4f}"
+
+    def calculate_age(self, pair_created_at):
+        if not pair_created_at:
+            return "Unknown"
+        created_time = datetime.fromtimestamp(pair_created_at / 1000, timezone.utc)
+        now = datetime.now(timezone.utc)
+        days = (now - created_time).days
+        return f"{days}d ago"
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -77,24 +86,48 @@ class Solana(commands.Cog):
                     sorted_pairs = sorted(usd_pairs, key=lambda x: float(x.get('volume', {}).get('h24', 0)), reverse=True)
                     pair = sorted_pairs[0]
                     
-                    # Get quote token symbol for display
-                    quote_symbol = pair['quoteToken']['symbol'].upper()
+                    # Get token info
+                    token_name = pair['baseToken']['name']
+                    token_symbol = pair['baseToken']['symbol']
+                    price = float(pair['priceUsd'])
+                    mcap = float(pair['marketCap'])
+                    volume = float(pair['volume']['h24'])
+                    liquidity = float(pair['liquidity']['usd'])
+                    price_change = float(pair['priceChange']['h24'])
+                    fdv = float(pair.get('fdv', mcap))  # Use marketcap if FDV not available
+                    
+                    # Get time-based changes
+                    h1_change = pair['priceChange'].get('h1', '0')
+                    h4_change = pair['priceChange'].get('h4', '0')
+                    h12_change = pair['priceChange'].get('h12', '0')
+                    
+                    # Calculate age
+                    age = self.calculate_age(pair.get('pairCreatedAt'))
+                    
+                    # Format description
+                    description = (
+                        f"{token_name} [{self.format_number(mcap)}/{'+'if price_change >= 0 else ''}{price_change}%] - {token_symbol}/SOL\n"
+                        f"{token_name} @ Raydium 🔥\n"
+                        f"💰 USD: {self.format_price(price)}\n"
+                        f"💎 FDV: ${self.format_number(fdv)}\n"
+                        f"💫 MC: ${self.format_number(mcap)}\n"
+                        f"💧 Liq: ${self.format_number(liquidity)}\n"
+                        f"📊 Vol: ${self.format_number(volume)} 🕒 Age: {age}\n"
+                        f"📈 1H: {h1_change}% • 4H: {h4_change}% • 12H: {h12_change}%\n\n"
+                        f"`{pair['baseToken']['address']}`\n\n"
+                        f"[DEX](https://dexscreener.com/solana/{pair['pairAddress']}) • "
+                        f"[BIRD](https://birdeye.so/token/{pair['baseToken']['address']}) • "
+                        f"[BLX](https://solscan.io/token/{pair['baseToken']['address']}) • "
+                        f"[SOL](https://solana.fm/address/{pair['baseToken']['address']}) • "
+                        f"[BNK](https://solanabeach.io/token/{pair['baseToken']['address']}) • "
+                        f"[JUP](https://jup.ag/swap/SOL-{pair['baseToken']['address']})"
+                    )
                     
                     # Create embed
                     embed = discord.Embed(
-                        title=f"{pair['baseToken']['symbol']}/{quote_symbol}",
-                        description=f"Token Name: {pair['baseToken']['name']}\n" + \
-                                  f"Price: {self.format_price(float(pair['priceUsd']))}\n" + \
-                                  f"Price Change 24h: {pair['priceChange']['h24']}%\n" + \
-                                  f"Market Cap: ${self.format_number(float(pair['marketCap']))}\n" + \
-                                  f"Liquidity: ${self.format_number(float(pair['liquidity']['usd']))}\n" + \
-                                  f"Volume 24h: ${self.format_number(float(pair['volume']['h24']))}\n\n" + \
-                                  f"Contract Address: `{pair['baseToken']['address']}`\n\n" + \
-                                  f"[DexScreener](https://dexscreener.com/solana/{pair['pairAddress']}) | " + \
-                                  f"[Raydium](https://raydium.io/swap/?inputCurrency={pair['baseToken']['address']}) | " + \
-                                  f"[Birdeye](https://birdeye.so/token/{pair['baseToken']['address']}) | " + \
-                                  f"[Dextools](https://www.dextools.io/app/solana/pair-explorer/{pair['pairAddress']})",
-                        color=0x00ff00
+                        title=f"{token_symbol} Price",
+                        description=description,
+                        color=0x00ff00 if price_change >= 0 else 0xff0000
                     )
                     
                     await message.channel.send(embed=embed)
