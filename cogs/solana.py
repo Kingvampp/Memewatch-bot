@@ -1,99 +1,103 @@
 import discord
 from discord.ext import commands
-import aiohttp
 import logging
+import aiohttp
 import json
-from datetime import datetime, timedelta
 
-class SolanaCog(commands.Cog):
+class Solana(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.session = aiohttp.ClientSession()
-        self.logger = logging.getLogger('solana')
+        self.dexscreener_api = "https://api.dexscreener.com/latest/dex"
         
-    async def get_token_holders(self, contract_address):
-        """Get top token holders information"""
+    def format_number(self, num):
+        if num >= 1_000_000_000_000:  # Trillion
+            return f"{num/1_000_000_000_000:.2f}T"
+        elif num >= 1_000_000_000:  # Billion
+            return f"{num/1_000_000_000:.2f}B"
+        elif num >= 1_000_000:  # Million
+            return f"{num/1_000_000:.2f}M"
+        elif num >= 1_000:  # Thousand
+            return f"{num/1_000:.2f}K"
+        return f"{num:.2f}"
+
+    def format_price(self, price):
+        if price < 0.0001:
+            return f"${price:.10f}"
+        elif price < 0.01:
+            return f"${price:.6f}"
+        else:
+            return f"${price:.4f}"
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot:
+            return
+            
+        if not message.content.startswith('$'):
+            return
+            
+        token_id = message.content[1:].strip().lower()
+        if not token_id:
+            return
+            
         try:
-            url = f"https://public-api.birdeye.so/public/token_holders?address={contract_address}"
-            async with self.session.get(url) as response:
-                data = await response.json()
-                return data.get('data', {}).get('items', [])[:5]  # Top 5 holders
+            # Search for pairs
+            search_url = f"{self.dexscreener_api}/search?q={token_id}"
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(search_url, headers=headers) as response:
+                    if response.status != 200:
+                        await message.channel.send(f"❌ Could not find token information for {token_id}. Please check the symbol/address and try again.")
+                        return
+                        
+                    data = await response.json()
+                    pairs = data.get('pairs', [])
+                    
+                    # Filter for Solana pairs
+                    solana_pairs = [p for p in pairs if p.get('chainId') == 'solana']
+                    if not solana_pairs:
+                        await message.channel.send(f"❌ Could not find Solana token information for {token_id}. Please check the symbol/address and try again.")
+                        return
+                    
+                    # Filter for USD pairs and sort by volume
+                    usd_pairs = [p for p in solana_pairs if p.get('quoteToken', {}).get('symbol', '').upper() in ['USDC', 'USDT', 'USD']]
+                    if not usd_pairs:
+                        await message.channel.send(f"❌ Could not find USD pair for Solana token {token_id}. Please check the symbol/address and try again.")
+                        return
+                    
+                    # Sort by 24h volume to get the most active pair
+                    sorted_pairs = sorted(usd_pairs, key=lambda x: float(x.get('volume', {}).get('h24', 0)), reverse=True)
+                    pair = sorted_pairs[0]
+                    
+                    # Get quote token symbol for display
+                    quote_symbol = pair['quoteToken']['symbol'].upper()
+                    
+                    # Create embed
+                    embed = discord.Embed(
+                        title=f"{pair['baseToken']['symbol']}/{quote_symbol}",
+                        description=f"Token Name: {pair['baseToken']['name']}\n" + \
+                                  f"Price: {self.format_price(float(pair['priceUsd']))}\n" + \
+                                  f"Price Change 24h: {pair['priceChange']['h24']}%\n" + \
+                                  f"Market Cap: ${self.format_number(float(pair['marketCap']))}\n" + \
+                                  f"Liquidity: ${self.format_number(float(pair['liquidity']['usd']))}\n" + \
+                                  f"Volume 24h: ${self.format_number(float(pair['volume']['h24']))}\n\n" + \
+                                  f"Contract Address: `{pair['baseToken']['address']}`\n\n" + \
+                                  f"[DexScreener](https://dexscreener.com/solana/{pair['pairAddress']}) | " + \
+                                  f"[Raydium](https://raydium.io/swap/?inputCurrency={pair['baseToken']['address']}) | " + \
+                                  f"[Birdeye](https://birdeye.so/token/{pair['baseToken']['address']}) | " + \
+                                  f"[Dextools](https://www.dextools.io/app/solana/pair-explorer/{pair['pairAddress']})",
+                        color=0x00ff00
+                    )
+                    
+                    await message.channel.send(embed=embed)
+                    
         except Exception as e:
-            self.logger.error(f"Error fetching holders: {e}")
-            return None
-
-    async def get_recent_trades(self, contract_address):
-        """Get recent trade activity"""
-        try:
-            url = f"https://public-api.birdeye.so/public/trade_history?address={contract_address}"
-            async with self.session.get(url) as response:
-                data = await response.json()
-                return data.get('data', [])[:5]  # Last 5 trades
-        except Exception as e:
-            self.logger.error(f"Error fetching trades: {e}")
-            return None
-
-    @commands.command(name='holders')
-    async def show_holders(self, ctx, contract_address: str):
-        """Show top token holders"""
-        async with ctx.typing():
-            holders = await self.get_token_holders(contract_address)
-            if not holders:
-                await ctx.send("❌ Could not fetch holder information")
-                return
-
-            embed = discord.Embed(
-                title="👥 Top Token Holders",
-                description=f"Contract: `{contract_address}`",
-                color=discord.Color.blue()
-            )
-
-            for holder in holders:
-                amount = float(holder.get('amount', 0))
-                percent = float(holder.get('percentage', 0))
-                address = holder.get('owner', 'Unknown')
-                embed.add_field(
-                    name=f"🏦 {address[:8]}...{address[-4:]}",
-                    value=f"Holdings: {amount:,.0f} ({percent:.2f}%)",
-                    inline=False
-                )
-
-            await ctx.send(embed=embed)
-
-    @commands.command(name='trades')
-    async def show_trades(self, ctx, contract_address: str):
-        """Show recent trades"""
-        async with ctx.typing():
-            trades = await self.get_recent_trades(contract_address)
-            if not trades:
-                await ctx.send("❌ Could not fetch trade information")
-                return
-
-            embed = discord.Embed(
-                title="📊 Recent Trades",
-                description=f"Contract: `{contract_address}`",
-                color=discord.Color.blue()
-            )
-
-            for trade in trades:
-                side = "🟢 Buy" if trade.get('side') == 'buy' else "🔴 Sell"
-                price = float(trade.get('price', 0))
-                amount = float(trade.get('amount', 0))
-                value = price * amount
-                time = datetime.fromtimestamp(trade.get('time', 0)/1000)
-                time_ago = (datetime.utcnow() - time).total_seconds() / 60  # minutes
-
-                embed.add_field(
-                    name=f"{side} • {time_ago:.1f}m ago",
-                    value=f"Price: ${price:.8f}\nAmount: {amount:,.0f}\nValue: ${value:,.2f}",
-                    inline=False
-                )
-
-            await ctx.send(embed=embed)
-
-    def cog_unload(self):
-        """Cleanup when cog is unloaded"""
-        self.bot.loop.create_task(self.session.close())
+            logging.error(f"Error getting token info: {str(e)}")
+            await message.channel.send(f"❌ Could not find token information for {token_id}. Please check the symbol/address and try again.")
 
 async def setup(bot):
-    await bot.add_cog(SolanaCog(bot))
+    await bot.add_cog(Solana(bot))

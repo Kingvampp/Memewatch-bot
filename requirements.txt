@@ -1,12 +1,4 @@
-discord.py>=2.3.2
-python-dotenv>=1.0.0
-requests>=2.31.0
-anthropic>=0.7.0
-Pillow>=10.1.0
-urllib3<2.0.0
-aiohttp>=3.9.0
-certifi>=2023.7.22
-charset-normalizer>=3.3.2
-idna>=3.4
-multidict>=6.0.4
-yarl>=1.9.3
+discord.py==2.3.2
+python-dotenv==1.0.0
+aiohttp==3.9.1
+requests==2.31.0
