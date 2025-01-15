@@ -50,25 +50,21 @@ class Solana(commands.Cog):
             return
             
         try:
-            # Try pairs endpoint first for exact matches
-            pairs_url = f"{self.dexscreener_api}/pairs/solana"
+            # Use search endpoint directly
+            search_url = f"{self.dexscreener_api}/search?q={token_id}"
             headers = {
                 "Accept": "application/json",
                 "User-Agent": "Mozilla/5.0"
             }
-            params = {"q": token_id}
             
             async with aiohttp.ClientSession() as session:
-                async with session.get(pairs_url, params=params, headers=headers) as response:
+                async with session.get(search_url, headers=headers) as response:
+                    if response.status != 200:
+                        await message.channel.send(f"❌ Could not find token information for {token_id}. Please check the symbol/address and try again.")
+                        return
+                        
                     data = await response.json()
                     pairs = data.get('pairs', [])
-                    
-                    if not pairs:
-                        # If no pairs found, try search endpoint
-                        search_url = f"{self.dexscreener_api}/search?q={token_id}"
-                        async with session.get(search_url, headers=headers) as search_response:
-                            search_data = await search_response.json()
-                            pairs = search_data.get('pairs', [])
                     
                     # Filter for Solana pairs
                     solana_pairs = [p for p in pairs if p.get('chainId') == 'solana']
