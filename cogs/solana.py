@@ -167,10 +167,7 @@ class Solana(commands.Cog):
                     # Calculate age
                     age = self.calculate_age(pair.get('pairCreatedAt'))
 
-                    # Get ATH data (using current values as placeholder - you'll need to implement ATH tracking)
-                    ath_price = price * 1.5  # Placeholder
-                    ath_mcap = mcap * 1.5   # Placeholder
-                    ath_time = "5m"         # Placeholder
+                    
                     
                     # Check if this is the first scan
                     token_address = pair['baseToken']['address']
