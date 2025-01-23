@@ -289,15 +289,6 @@ class Solana(commands.Cog):
             self.logger.error(f"Error formatting scan info: {str(e)}")
             return ""
 
-    @commands.command(name='ping')
-    async def ping(self, ctx):
-        """Simple command to test if the bot is responsive"""
-        try:
-            self.logger.info("[PING] Command received")
-            await ctx.send("🏓 Pong!")
-        except Exception as e:
-            self.logger.error(f"[PING] Error: {str(e)}")
-
     async def get_birdeye_data(self, token_address):
         """Fetch data from Birdeye API"""
         try:
