@@ -49,55 +49,60 @@ class Solana(commands.Cog):
         self.last_scan[user_id] = now
         return True
 
+    async def get_dexscreener_data(self, token_address):
+        """Fetch data from DexScreener API"""
+        try:
+            url = f"{os.getenv('DEXSCREENER_URL')}/tokens/{token_address}"
+            async with self.session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    pairs = data.get('pairs', [])
+                    if pairs:
+                        # Get the most liquid pair
+                        pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
+                        return {
+                            'price': float(pair.get('priceUsd', 0)),
+                            'price_change_1h': float(pair.get('priceChange', {}).get('h1', 0)),
+                            'price_change_4h': float(pair.get('priceChange', {}).get('h4', 0)),
+                            'liquidity_usd': float(pair.get('liquidity', {}).get('usd', 0)),
+                            'volume_24h': float(pair.get('volume', {}).get('h24', 0)),
+                            'ath_price': float(pair.get('priceUsd', {}).get('h24', 0)),
+                            'ath_timestamp': pair.get('athTimestamp'),
+                        }
+        except Exception as e:
+            self.logger.error(f"DexScreener API error: {str(e)}")
+        return None
+
     async def get_token_data(self, token_address):
         """Fetch token data from multiple sources with retries"""
         if not self.session:
-            self.session = aiohttp.ClientSession()  # Ensure session exists
-            
-        retry_count = 3
-        for attempt in range(retry_count):
-            try:
-                # Add debug logging
-                self.logger.info(f"Fetching token data attempt {attempt + 1}")
-                
-                # Birdeye API with proper headers
-                headers = {'X-API-KEY': self.birdeye_key} if self.birdeye_key else {}
-                birdeye_url = f"{self.birdeye_api}/token_info?address={token_address}"
-                
-                # Add debug logging
-                self.logger.info(f"Making API request to: {birdeye_url}")
-                
-                async with self.session.get(birdeye_url, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        self.logger.info("API response received successfully")
-                        
-                        if 'data' in data:
-                            token_data = self.process_token_data(data['data'])
-                            
-                            # Enrich with Solscan data
-                            solscan_data = await self.get_solscan_data(token_address)
-                            if solscan_data:
-                                token_data.update(solscan_data)
-                                
-                            return token_data
-                    elif response.status == 429:  # Rate limit
-                        self.logger.warning("Rate limit hit, backing off...")
-                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                        continue
-                    else:
-                        self.logger.error(f"Birdeye API error: {response.status}")
-                        response_text = await response.text()
-                        self.logger.error(f"Response body: {response_text}")
-                        
-            except Exception as e:
-                self.logger.error(f"Token data fetch error (attempt {attempt+1}): {str(e)}")
-                self.logger.error(f"Full traceback: {traceback.format_exc()}")
-                if attempt == retry_count - 1:
-                    return None
-                await asyncio.sleep(1)
+            self.session = aiohttp.ClientSession()
         
-        return None
+        try:
+            # Get data from multiple sources
+            birdeye_data = await self.get_birdeye_data(token_address)
+            solscan_data = await self.get_solscan_data(token_address)
+            dexscreener_data = await self.get_dexscreener_data(token_address)
+            
+            # Combine data with priority (DexScreener > Birdeye > Solscan)
+            token_data = {}
+            if birdeye_data:
+                token_data.update(birdeye_data)
+            if solscan_data:
+                token_data.update(solscan_data)
+            if dexscreener_data:
+                # Update specific fields from DexScreener
+                token_data.update({
+                    'price_change_1h': dexscreener_data['price_change_1h'],
+                    'price_change_4h': dexscreener_data['price_change_4h'],
+                    'ath_price': dexscreener_data['ath_price'],
+                    'ath_timestamp': dexscreener_data['ath_timestamp']
+                })
+            
+            return token_data
+        except Exception as e:
+            self.logger.error(f"Error fetching token data: {str(e)}")
+            return None
 
     async def get_solscan_data(self, token_address):
         """Fetch additional data from Solscan"""
