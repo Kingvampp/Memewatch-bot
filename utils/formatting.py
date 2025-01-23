@@ -1,12 +1,5 @@
 """Formatting utilities for the MemeWatch bot."""
 from datetime import datetime, timezone
-from utils.database import DatabaseManager  # ✓ Should work
-from utils.formatting import (             # ✓ Should work
-    format_number,
-    format_price,
-    format_time_ago,
-    format_percentage
-)
 
 def format_number(num):
     """Format large numbers into readable strings with K, M, B, T suffixes"""
