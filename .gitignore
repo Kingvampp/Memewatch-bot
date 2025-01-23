@@ -1,5 +1,6 @@
 # Environment variables
 .env
+.env.*
 
 # Python
 __pycache__/
@@ -7,6 +8,8 @@ __pycache__/
 *$py.class
 .Python
 env/
+venv/
+.venv/
 build/
 develop-eggs/
 dist/
@@ -21,7 +24,10 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
-.venv/
+
+# Database
+*.db
+*.sqlite3
 
 # IDE
 .idea/
@@ -31,4 +37,9 @@ var/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/ 
