@@ -15,9 +15,13 @@ class AnalyzerCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = logging.getLogger('bot')
-        self.claude = Anthropic(
-            api_key=os.getenv('CLAUDE_API_KEY')
-        )
+        # Initialize Anthropic client without proxies
+        if os.getenv('CLAUDE_API_KEY'):
+            self.claude = Anthropic(
+                api_key=os.getenv('CLAUDE_API_KEY')
+            )
+        else:
+            self.claude = None
         
     @commands.command(name='quant')
     @commands.cooldown(1, 60, commands.BucketType.user)
