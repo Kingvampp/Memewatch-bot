@@ -22,6 +22,7 @@ class Solana(commands.Cog):
         self.last_scan = {}  # Rate limiting
         self.logger = logging.getLogger('solana')
         self.session = None
+        self.db = bot.db  # Get database reference from bot
         
         # Add API keys from environment
         self.birdeye_key = os.getenv('BIRDEYE_API_KEY')
@@ -223,24 +224,40 @@ class Solana(commands.Cog):
 
     def create_token_embed(self, data, address):
         """Create a rich embed for token data"""
-        embed = discord.Embed(title=f"{data['symbol']}/SOL", description=data['name'])
-        embed.add_field(name="", value=f"""
-💰 USD: {self.format_price(data['price'])}
-💎 FDV: {self.format_number(data['fdv'])}
-💫 MC: {self.format_number(data['mcap'])} ➡︎ ATH: {self.format_number(ath_mcap)} [{ath_time}]
-💦 Liq: {self.format_number(data['liquidity'])}
-📊 Vol: {self.format_number(data['volume'])} 🕰️ Age: {data['age']}
-🚀 1H: {self.format_percentage(price_changes['1h'])} 🚀 4H: {self.format_percentage(price_changes['4h'])}
+        try:
+            # Get price changes
+            price_changes = {
+                '1h': data.get('price_change_1h', 0),
+                '4h': data.get('price_change_4h', 0)
+            }
+            
+            # Get ATH data
+            ath_mcap = data.get('ath_mcap', data.get('mcap', 0))
+            ath_time = data.get('ath_timestamp', 'Unknown')
+            if ath_time != 'Unknown':
+                ath_time = format_time_ago(int(ath_time))
+            
+            embed = discord.Embed(title=f"{data['symbol']}/SOL", description=data['name'])
+            embed.add_field(name="", value=f"""
+💰 USD: {format_price(float(data['price']))}
+💎 FDV: {format_number(float(data['fdv']))}
+💫 MC: {format_number(float(data['mcap']))} ➡︎ ATH: {format_number(float(ath_mcap))} [{ath_time}]
+💦 Liq: {format_number(float(data['liquidity']))}
+📊 Vol: {format_number(float(data['volume']))} 🕰️ Age: {data['age']}
+🚀 1H: {format_percentage(price_changes['1h'])} 🚀 4H: {format_percentage(price_changes['4h'])}
 
 {address}
 
 {' • '.join(data['dexes'])}
 """, inline=False)
-        
-        if data.get('verified'):
-            embed.add_field(name="✅ Verified", value="Yes", inline=True)
             
-        return embed
+            if data.get('verified'):
+                embed.add_field(name="✅ Verified", value="Yes", inline=True)
+            
+            return embed
+        except Exception as e:
+            self.logger.error(f"Error creating embed: {str(e)}")
+            raise
 
     def validate_token_address(self, address):
         """Validate Solana token address format"""
@@ -280,6 +297,21 @@ class Solana(commands.Cog):
             await ctx.send("🏓 Pong!")
         except Exception as e:
             self.logger.error(f"[PING] Error: {str(e)}")
+
+    async def get_birdeye_data(self, token_address):
+        """Fetch data from Birdeye API"""
+        try:
+            url = f"{self.birdeye_api}/token/info?address={token_address}"
+            headers = {'X-API-KEY': self.birdeye_key}
+            
+            async with self.session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('success'):
+                        return self.process_token_data(data.get('data', {}))
+        except Exception as e:
+            self.logger.error(f"Birdeye API error: {str(e)}")
+        return None
 
 async def setup(bot):
     await bot.add_cog(Solana(bot))
