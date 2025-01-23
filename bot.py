@@ -1,40 +1,68 @@
+import os
+import sys
 import discord
 from discord.ext import commands
 import logging
-import os
+import traceback
 from dotenv import load_dotenv
+import aiohttp
 from utils.database import DatabaseManager
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger('bot')
 
 # Load environment variables
 load_dotenv()
 
-# Bot setup
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='$', intents=intents)
+# Add the current directory to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Initialize database
-db = DatabaseManager()
+class MemeWatchBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        
+        super().__init__(command_prefix='$', intents=intents)
+        self.db = DatabaseManager()
+        self.session = None
+        
+    async def setup_hook(self):
+        """Setup bot hooks and aiohttp session"""
+        self.session = aiohttp.ClientSession()
+        
+        # Load all cogs
+        for filename in os.listdir('./cogs'):
+            if filename.endswith('.py'):
+                try:
+                    await self.load_extension(f'cogs.{filename[:-3]}')
+                    logger.info(f'Loaded {filename}')
+                except Exception as e:
+                    logger.error(f'Failed to load {filename}: {str(e)}')
+                    logger.error(traceback.format_exc())
+
+    async def close(self):
+        """Cleanup on bot shutdown"""
+        if self.session:
+            await self.session.close()
+        await super().close()
+
+bot = MemeWatchBot()
 
 @bot.event
 async def on_ready():
     logger.info(f'Logged in as {bot.user.name}')
-    
-    # Load all cogs
-    for filename in os.listdir('./cogs'):
-        if filename.endswith('.py'):
-            try:
-                await bot.load_extension(f'cogs.{filename[:-3]}')
-                logger.info(f'Loaded {filename}')
-            except Exception as e:
-                logger.error(f'Failed to load {filename}: {str(e)}')
+    await bot.change_presence(activity=discord.Activity(
+        type=discord.ActivityType.watching,
+        name="memecoins 👀"
+    ))
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -44,8 +72,11 @@ async def on_command_error(ctx, error):
         await ctx.send("❌ You don't have permission to use this command.")
     elif isinstance(error, commands.CommandOnCooldown):
         await ctx.send(f"⏳ Please wait {error.retry_after:.1f}s before using this command again.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ Missing required argument: {error.param.name}")
     else:
-        logger.error(f"Unhandled error: {str(error)}")
+        logger.error(f"Command error in {ctx.command}: {str(error)}")
+        logger.error(traceback.format_exc())
         await ctx.send("❌ An error occurred while processing your command.")
 
 @bot.event
@@ -61,3 +92,4 @@ if __name__ == "__main__":
         bot.run(os.getenv('DISCORD_TOKEN'))
     except Exception as e:
         logger.critical(f"Failed to start bot: {str(e)}")
+        logger.critical(traceback.format_exc())

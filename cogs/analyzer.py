@@ -6,7 +6,7 @@ import aiohttp
 import base64
 import io
 import os
-import anthropic
+from anthropic import Anthropic
 from PIL import Image
 
 logger = logging.getLogger('bot')
@@ -15,86 +15,79 @@ class AnalyzerCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = logging.getLogger('bot')
+        self.claude = Anthropic(api_key=os.getenv('CLAUDE_API_KEY'))
         
     @commands.command(name='quant')
+    @commands.cooldown(1, 60, commands.BucketType.user)
     async def analyze(self, ctx):
         """Analyze a chart image using Claude Vision API"""
         try:
-            # Check if an image is attached
             if not ctx.message.attachments:
-                await ctx.send("Please attach a chart image to analyze.")
+                await ctx.send("❌ Please attach a chart image to analyze.")
                 return
                 
             attachment = ctx.message.attachments[0]
-            
-            # Validate file type
             if not attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                await ctx.send("Please provide a PNG or JPG image.")
-                return
-                
-            # Check file size (8MB limit)
-            if attachment.size > 8 * 1024 * 1024:
-                await ctx.send("Image size must be under 8MB.")
+                await ctx.send("❌ Please provide a PNG or JPG image.")
                 return
                 
             async with ctx.typing():
-                # Download the image
-                image_data = await attachment.read()
+                # Download image
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(attachment.url) as resp:
+                        if resp.status != 200:
+                            await ctx.send("❌ Failed to download image.")
+                            return
+                        image_data = await resp.read()
                 
-                # Convert to base64
-                image_b64 = base64.b64encode(image_data).decode('utf-8')
+                # Process image
+                image = Image.open(io.BytesIO(image_data))
                 
-                # Send to Claude API
-                headers = {
-                    'x-api-key': CLAUDE_API_KEY,
-                    'Content-Type': 'application/json'
-                }
+                # Resize if too large
+                max_size = (800, 800)
+                if image.size[0] > max_size[0] or image.size[1] > max_size[1]:
+                    image.thumbnail(max_size, Image.Resampling.LANCZOS)
                 
-                data = {
-                    'model': 'claude-3-opus-20240229',
-                    'messages': [{
-                        'role': 'user',
-                        'content': [
+                # Convert to bytes
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format=image.format)
+                img_byte_arr = img_byte_arr.getvalue()
+                
+                # Get analysis from Claude
+                response = await self.claude.messages.create(
+                    model="claude-3-opus-20240229",
+                    max_tokens=1000,
+                    messages=[{
+                        "role": "user",
+                        "content": [
                             {
-                                'type': 'text',
-                                'text': 'Please analyze this cryptocurrency chart and provide insights about the price action, key levels, patterns, and potential next moves. Focus on technical analysis.'
+                                "type": "text",
+                                "text": "Analyze this price chart and provide technical analysis. Focus on key support/resistance levels, trend direction, and potential entry/exit points. Be concise."
                             },
                             {
-                                'type': 'image',
-                                'source': {
-                                    'type': 'base64',
-                                    'media_type': 'image/jpeg',
-                                    'data': image_b64
-                                }
+                                "type": "image",
+                                "image": img_byte_arr
                             }
                         ]
                     }]
-                }
+                )
                 
-                async with aiohttp.ClientSession() as session:
-                    async with session.post('https://api.anthropic.com/v1/messages', json=data, headers=headers) as response:
-                        if response.status == 200:
-                            result = await response.json()
-                            analysis = result['content'][0]['text']
-                            
-                            # Create embed
-                            embed = discord.Embed(
-                                title="Chart Analysis",
-                                description=analysis,
-                                color=discord.Color.blue()
-                            )
-                            
-                            # Add image thumbnail
-                            embed.set_thumbnail(url=attachment.url)
-                            
-                            await ctx.send(embed=embed)
-                        else:
-                            await ctx.send("Error analyzing chart. Please try again later.")
-                            
+                analysis = response.content[0].text
+                
+                # Create embed
+                embed = discord.Embed(
+                    title="Chart Analysis",
+                    description=analysis,
+                    color=discord.Color.blue()
+                )
+                embed.set_thumbnail(url=attachment.url)
+                
+                await ctx.send(embed=embed)
+                
         except Exception as e:
-            self.logger.error(f"Error in analyze command: {str(e)}")
+            self.logger.error(f"Analysis error: {str(e)}")
             self.logger.error(traceback.format_exc())
-            await ctx.send("An error occurred while analyzing the chart. Please try again later.")
+            await ctx.send("❌ An error occurred during analysis. Please try again later.")
 
     @commands.command(name='ping')
     async def ping(self, ctx):
