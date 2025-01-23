@@ -150,44 +150,75 @@ class Solana(commands.Cog):
         """Scan a token and display its information"""
         try:
             # Add debug logging
-            self.logger.info(f"Scan command received for token: {token_address}")
+            self.logger.info(f"[SCAN] Command received from {ctx.author.name} for token: {token_address}")
             
             # Check rate limit
             if not await self._check_rate_limit(ctx.author.id):
+                self.logger.info("[SCAN] Rate limit hit")
                 await ctx.send("⏳ Please wait before scanning another token.")
                 return
                 
             async with ctx.typing():
                 # Validate token address format
                 if not self.validate_token_address(token_address):
+                    self.logger.error("[SCAN] Invalid token address format")
                     await ctx.send("❌ Invalid token address format.")
                     return
                     
-                # Add debug logging
-                self.logger.info("Fetching token data...")
+                # Add debug logging for API calls
+                self.logger.info("[SCAN] Starting API calls...")
+                
+                # Test each API individually
+                try:
+                    birdeye_data = await self.get_birdeye_data(token_address)
+                    self.logger.info(f"[SCAN] Birdeye data: {bool(birdeye_data)}")
+                except Exception as e:
+                    self.logger.error(f"[SCAN] Birdeye API error: {str(e)}")
+                    
+                try:
+                    solscan_data = await self.get_solscan_data(token_address)
+                    self.logger.info(f"[SCAN] Solscan data: {bool(solscan_data)}")
+                except Exception as e:
+                    self.logger.error(f"[SCAN] Solscan API error: {str(e)}")
+                    
+                try:
+                    dexscreener_data = await self.get_dexscreener_data(token_address)
+                    self.logger.info(f"[SCAN] DexScreener data: {bool(dexscreener_data)}")
+                except Exception as e:
+                    self.logger.error(f"[SCAN] DexScreener API error: {str(e)}")
+                
+                # Get combined token data
                 token_data = await self.get_token_data(token_address)
                 
                 if not token_data:
+                    self.logger.error("[SCAN] Could not fetch token data")
                     await ctx.send("❌ Could not fetch token data. Please try again later.")
                     return
 
-                # Add debug logging
-                self.logger.info("Creating embed...")
-                embed = self.create_token_embed(token_data, token_address)
+                # Add debug logging for embed creation
+                self.logger.info("[SCAN] Creating embed...")
+                try:
+                    embed = self.create_token_embed(token_data, token_address)
+                except Exception as e:
+                    self.logger.error(f"[SCAN] Error creating embed: {str(e)}")
+                    raise
                 
-                # Add debug logging
-                self.logger.info("Sending response...")
+                # Add debug logging for response
+                self.logger.info("[SCAN] Sending response...")
                 await ctx.send(embed=embed)
                 
                 # Save scan to database
-                mcap = float(token_data['mcap'].replace('$', '').replace(',', ''))
-                scan_info = await self.format_scan_info(ctx, token_data, mcap)
-                if scan_info:
-                    await ctx.send(scan_info)
+                try:
+                    mcap = float(token_data.get('mcap', '0').replace('$', '').replace(',', ''))
+                    scan_info = await self.format_scan_info(ctx, token_data, mcap)
+                    if scan_info:
+                        await ctx.send(scan_info)
+                except Exception as e:
+                    self.logger.error(f"[SCAN] Error saving scan: {str(e)}")
                 
         except Exception as e:
-            self.logger.error(f"Scan command error: {str(e)}")
-            self.logger.error(f"Full traceback: {traceback.format_exc()}")
+            self.logger.error(f"[SCAN] Command error: {str(e)}")
+            self.logger.error(f"[SCAN] Full traceback: {traceback.format_exc()}")
             await ctx.send("❌ An error occurred while scanning the token.")
 
     def create_token_embed(self, data, address):
@@ -196,10 +227,10 @@ class Solana(commands.Cog):
         embed.add_field(name="", value=f"""
 💰 USD: {self.format_price(data['price'])}
 💎 FDV: {self.format_number(data['fdv'])}
-💫 MC: {self.format_number(data['mcap'])} ➡︎ ATH: {self.format_number(data['mcap'])} [{self.format_time_ago(data['created_at'])}]
+💫 MC: {self.format_number(data['mcap'])} ➡︎ ATH: {self.format_number(ath_mcap)} [{ath_time}]
 💦 Liq: {self.format_number(data['liquidity'])}
-📊 Vol: {self.format_number(data['volume'])} 🕰️ Age: {self.format_time_ago(data['created_at'])}
-🚀 1H: {self.format_percentage(data['price_change_24h'])} 🚀 4H: {self.format_percentage(data['price_change_24h'])}
+📊 Vol: {self.format_number(data['volume'])} 🕰️ Age: {data['age']}
+🚀 1H: {self.format_percentage(price_changes['1h'])} 🚀 4H: {self.format_percentage(price_changes['4h'])}
 
 {address}
 
@@ -240,6 +271,15 @@ class Solana(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error formatting scan info: {str(e)}")
             return ""
+
+    @commands.command(name='ping')
+    async def ping(self, ctx):
+        """Simple command to test if the bot is responsive"""
+        try:
+            self.logger.info("[PING] Command received")
+            await ctx.send("🏓 Pong!")
+        except Exception as e:
+            self.logger.error(f"[PING] Error: {str(e)}")
 
 async def setup(bot):
     await bot.add_cog(Solana(bot))
