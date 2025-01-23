@@ -1,75 +1,70 @@
-import sqlite3
-import logging
 from datetime import datetime, timezone
 
-class DatabaseManager:
-    def __init__(self, db_path='token_scans.db'):
-        self.db_path = db_path
-        self.setup_database()
+def format_number(num):
+    """Format large numbers into readable strings with K, M, B, T suffixes"""
+    try:
+        num = float(num)
+        if num >= 1_000_000_000_000:  # Trillion
+            return f"{num/1_000_000_000_000:.2f}T"
+        elif num >= 1_000_000_000:  # Billion
+            return f"{num/1_000_000_000:.2f}B"
+        elif num >= 1_000_000:  # Million
+            return f"{num/1_000_000:.2f}M"
+        elif num >= 1_000:  # Thousand
+            return f"{num/1_000:.2f}K"
+        return f"{num:.2f}"
+    except (ValueError, TypeError):
+        return "0.00"
 
-    def setup_database(self):
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                c = conn.cursor()
-                c.execute('''CREATE TABLE IF NOT EXISTS token_scans
-                            (token_address TEXT, 
-                             first_scanner TEXT, 
-                             scan_time TIMESTAMP,
-                             first_mcap REAL, 
-                             guild_id TEXT,
-                             PRIMARY KEY (token_address, guild_id))''')
-                
-                # Price history table
-                c.execute('''CREATE TABLE IF NOT EXISTS price_history
-                            (token_address TEXT,
-                             price REAL,
-                             mcap REAL,
-                             timestamp TIMESTAMP,
-                             PRIMARY KEY (token_address, timestamp))''')
-                conn.commit()
-        except sqlite3.Error as e:
-            logging.error(f"Database setup error: {e}")
+def format_price(price):
+    """Format price with appropriate decimal places based on size"""
+    try:
+        price = float(price)
+        if price < 0.0001:
+            return f"${price:.10f}"
+        elif price < 0.01:
+            return f"${price:.6f}"
+        elif price < 1:
+            return f"${price:.4f}"
+        else:
+            return f"${price:.2f}"
+    except (ValueError, TypeError):
+        return "$0.00"
 
-    async def get_scan_info(self, token_address, guild_id):
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                c = conn.cursor()
-                c.execute('''SELECT first_scanner, scan_time, first_mcap 
-                            FROM token_scans 
-                            WHERE token_address = ? AND guild_id = ?''', 
-                            (token_address, str(guild_id)))
-                return c.fetchone()
-        except sqlite3.Error as e:
-            logging.error(f"Database query error: {e}")
-            return None
+def format_time_ago(timestamp):
+    """Convert timestamp to 'time ago' format"""
+    if not timestamp:
+        return "Unknown"
+        
+    try:
+        # Convert milliseconds to seconds if necessary
+        if timestamp > 1e12:
+            timestamp = timestamp / 1000
+            
+        then = datetime.fromtimestamp(timestamp, timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = now - then
+        
+        if delta.days > 365:
+            return f"{delta.days // 365}y"
+        elif delta.days > 30:
+            return f"{delta.days // 30}mo"
+        elif delta.days > 0:
+            return f"{delta.days}d"
+        elif delta.seconds >= 3600:
+            return f"{delta.seconds // 3600}h"
+        elif delta.seconds >= 60:
+            return f"{delta.seconds // 60}m"
+        return f"{delta.seconds}s"
+    except (ValueError, TypeError):
+        return "Unknown"
 
-    async def save_scan(self, token_address, scanner_id, mcap, guild_id):
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                c = conn.cursor()
-                c.execute('''INSERT OR IGNORE INTO token_scans 
-                            (token_address, first_scanner, scan_time, first_mcap, guild_id)
-                            VALUES (?, ?, ?, ?, ?)''',
-                            (token_address, str(scanner_id), 
-                             datetime.now(timezone.utc).timestamp(),
-                             mcap, str(guild_id)))
-                conn.commit()
-                return True
-        except sqlite3.Error as e:
-            logging.error(f"Database insert error: {e}")
-            return False
-
-    async def update_price_history(self, token_address, price, mcap):
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                c = conn.cursor()
-                c.execute('''INSERT INTO price_history 
-                            (token_address, price, mcap, timestamp)
-                            VALUES (?, ?, ?, ?)''',
-                            (token_address, price, mcap, 
-                             datetime.now(timezone.utc).timestamp()))
-                conn.commit()
-                return True
-        except sqlite3.Error as e:
-            logging.error(f"Price history update error: {e}")
-            return False
+def format_percentage(value):
+    """Format percentage with appropriate sign and decimals"""
+    try:
+        value = float(value)
+        if value > 0:
+            return f"+{value:.1f}%"
+        return f"{value:.1f}%"
+    except (ValueError, TypeError):
+        return "0.0%"
