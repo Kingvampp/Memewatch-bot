@@ -12,6 +12,7 @@ from utils.formatting import (
     format_time_ago, 
     format_percentage
 )
+import traceback
 
 class Solana(commands.Cog):
     def __init__(self, bot):
@@ -56,14 +57,22 @@ class Solana(commands.Cog):
         retry_count = 3
         for attempt in range(retry_count):
             try:
+                # Add debug logging
+                self.logger.info(f"Fetching token data attempt {attempt + 1}")
+                
                 # Birdeye API with proper headers
                 headers = {'X-API-KEY': self.birdeye_key} if self.birdeye_key else {}
                 birdeye_url = f"{self.birdeye_api}/token_info?address={token_address}"
                 
+                # Add debug logging
+                self.logger.info(f"Making API request to: {birdeye_url}")
+                
                 async with self.session.get(birdeye_url, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
-                        if 'data' in data:  # Check if response has data field
+                        self.logger.info("API response received successfully")
+                        
+                        if 'data' in data:
                             token_data = self.process_token_data(data['data'])
                             
                             # Enrich with Solscan data
@@ -73,13 +82,17 @@ class Solana(commands.Cog):
                                 
                             return token_data
                     elif response.status == 429:  # Rate limit
+                        self.logger.warning("Rate limit hit, backing off...")
                         await asyncio.sleep(2 ** attempt)  # Exponential backoff
                         continue
                     else:
                         self.logger.error(f"Birdeye API error: {response.status}")
+                        response_text = await response.text()
+                        self.logger.error(f"Response body: {response_text}")
                         
             except Exception as e:
                 self.logger.error(f"Token data fetch error (attempt {attempt+1}): {str(e)}")
+                self.logger.error(f"Full traceback: {traceback.format_exc()}")
                 if attempt == retry_count - 1:
                     return None
                 await asyncio.sleep(1)
@@ -131,6 +144,9 @@ class Solana(commands.Cog):
     async def scan_token(self, ctx, token_address: str):
         """Scan a token and display its information"""
         try:
+            # Add debug logging
+            self.logger.info(f"Scan command received for token: {token_address}")
+            
             # Check rate limit
             if not await self._check_rate_limit(ctx.author.id):
                 await ctx.send("⏳ Please wait before scanning another token.")
@@ -142,23 +158,31 @@ class Solana(commands.Cog):
                     await ctx.send("❌ Invalid token address format.")
                     return
                     
+                # Add debug logging
+                self.logger.info("Fetching token data...")
                 token_data = await self.get_token_data(token_address)
                 
                 if not token_data:
                     await ctx.send("❌ Could not fetch token data. Please try again later.")
                     return
 
-                # Create rich embed
+                # Add debug logging
+                self.logger.info("Creating embed...")
                 embed = self.create_token_embed(token_data, token_address)
+                
+                # Add debug logging
+                self.logger.info("Sending response...")
                 await ctx.send(embed=embed)
                 
                 # Save scan to database
-                await self.bot.db.save_scan(token_address, ctx.author.id, 
-                                          float(token_data['mcap'].replace('$', '').replace(',', '')),
-                                          ctx.guild.id)
+                mcap = float(token_data['mcap'].replace('$', '').replace(',', ''))
+                scan_info = await self.format_scan_info(ctx, token_data, mcap)
+                if scan_info:
+                    await ctx.send(scan_info)
                 
         except Exception as e:
             self.logger.error(f"Scan command error: {str(e)}")
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
             await ctx.send("❌ An error occurred while scanning the token.")
 
     def create_token_embed(self, data, address):
