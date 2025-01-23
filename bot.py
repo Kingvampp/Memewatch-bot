@@ -35,17 +35,14 @@ class MemeWatchBot(commands.Bot):
         self.session = None
         
     async def setup_hook(self):
-        """Setup bot hooks and aiohttp session"""
-        self.session = aiohttp.ClientSession()
-        
-        # Load all cogs
+        """Load cogs and setup bot"""
         for filename in os.listdir('./cogs'):
-            if filename.endswith('.py'):
+            if filename.endswith('.py') and not filename.startswith('__'):  # Skip __init__.py
                 try:
                     await self.load_extension(f'cogs.{filename[:-3]}')
-                    logger.info(f'Loaded {filename}')
+                    logger.info(f"Loaded {filename}")
                 except Exception as e:
-                    logger.error(f'Failed to load {filename}: {str(e)}')
+                    logger.error(f"Failed to load {filename}: {str(e)}")
                     logger.error(traceback.format_exc())
 
     async def close(self):
