@@ -150,17 +150,14 @@ class Solana(commands.Cog):
     async def scan_token(self, ctx, token_address: str):
         """Scan a token and display its information"""
         try:
-            # Add debug logging
             self.logger.info(f"[SCAN] Command received from {ctx.author.name} for token: {token_address}")
             
+            if not self.validate_token_address(token_address):
+                await ctx.send("❌ Invalid token address format.")
+                return
+                
             async with ctx.typing():
-                # Validate token address format
-                if not self.validate_token_address(token_address):
-                    await ctx.send("❌ Invalid token address format.")
-                    return
-                    
-                # Get token data from DexScreener
-                token_data = await self.get_dexscreener_data(token_address)
+                token_data = await self.get_token_data(token_address)
                 if not token_data:
                     await ctx.send("❌ Could not fetch token data. Please try again later.")
                     return
@@ -169,19 +166,26 @@ class Solana(commands.Cog):
                 embed = self.create_token_embed(token_data, token_address)
                 await ctx.send(embed=embed)
                 
-                # Save scan info
-                try:
-                    mcap = float(token_data.get('mcap', '0').replace('$', '').replace(',', ''))
-                    scan_info = await self.format_scan_info(ctx, token_data, mcap)
-                    if scan_info:
-                        await ctx.send(scan_info)
-                except Exception as e:
-                    self.logger.error(f"[SCAN] Error saving scan: {str(e)}")
-                
+                # Format and send scan info
+                mcap = float(token_data.get('mcap', 0))
+                scan_info = await self.format_scan_info(ctx, token_data, mcap)
+                if scan_info:
+                    await ctx.send(scan_info)
+                    
         except Exception as e:
             self.logger.error(f"[SCAN] Command error: {str(e)}")
-            self.logger.error(f"[SCAN] Full traceback: {traceback.format_exc()}")
+            self.logger.error(traceback.format_exc())
             await ctx.send("❌ An error occurred while scanning the token.")
+
+    @commands.command(name='ping')
+    async def ping(self, ctx):
+        """Simple ping command to check if bot is responsive"""
+        try:
+            self.logger.info(f"[PING] Command received from {ctx.author.name}")
+            await ctx.send("🏓 Pong!")
+        except Exception as e:
+            self.logger.error(f"[PING] Error: {str(e)}")
+            await ctx.send("❌ An error occurred.")
 
     def create_token_embed(self, data, address):
         """Create a rich embed for token data"""

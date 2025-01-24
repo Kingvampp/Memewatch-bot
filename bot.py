@@ -38,23 +38,36 @@ class MemeWatchBot(commands.Bot):
         
     async def setup_hook(self):
         """Load cogs and setup bot"""
-        # Initialize aiohttp session
         self.session = aiohttp.ClientSession()
         
-        # Load cogs
-        for cog in ['security', 'solana']:  # Temporarily remove analyzer
+        # Load cogs with better error handling
+        cogs = ['security', 'solana']
+        for cog in cogs:
             try:
                 await self.load_extension(f'cogs.{cog}')
                 logger.info(f"Loaded {cog}.py")
             except Exception as e:
                 logger.error(f"Failed to load {cog}.py: {str(e)}")
                 logger.error(traceback.format_exc())
+                
+        logger.info("Bot setup complete")
 
     async def close(self):
         """Cleanup on bot shutdown"""
         if self.session:
             await self.session.close()
         await super().close()
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot:
+            return
+            
+        # Add debug logging
+        if message.content.startswith('$'):
+            logger.info(f"Command received: {message.content} from {message.author.name}")
+            
+        await self.process_commands(message)
 
 bot = MemeWatchBot()
 
@@ -80,14 +93,6 @@ async def on_command_error(ctx, error):
         logger.error(f"Command error in {ctx.command}: {str(error)}")
         logger.error(traceback.format_exc())
         await ctx.send("❌ An error occurred while processing your command.")
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-        
-    # Process commands
-    await bot.process_commands(message)
 
 if __name__ == "__main__":
     try:
