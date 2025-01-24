@@ -153,62 +153,23 @@ class Solana(commands.Cog):
             # Add debug logging
             self.logger.info(f"[SCAN] Command received from {ctx.author.name} for token: {token_address}")
             
-            # Check rate limit
-            if not await self._check_rate_limit(ctx.author.id):
-                self.logger.info("[SCAN] Rate limit hit")
-                await ctx.send("⏳ Please wait before scanning another token.")
-                return
-                
             async with ctx.typing():
                 # Validate token address format
                 if not self.validate_token_address(token_address):
-                    self.logger.error("[SCAN] Invalid token address format")
                     await ctx.send("❌ Invalid token address format.")
                     return
                     
-                # Add debug logging for API calls
-                self.logger.info("[SCAN] Starting API calls...")
-                
-                # Test each API individually
-                try:
-                    birdeye_data = await self.get_birdeye_data(token_address)
-                    self.logger.info(f"[SCAN] Birdeye data: {bool(birdeye_data)}")
-                except Exception as e:
-                    self.logger.error(f"[SCAN] Birdeye API error: {str(e)}")
-                    
-                try:
-                    solscan_data = await self.get_solscan_data(token_address)
-                    self.logger.info(f"[SCAN] Solscan data: {bool(solscan_data)}")
-                except Exception as e:
-                    self.logger.error(f"[SCAN] Solscan API error: {str(e)}")
-                    
-                try:
-                    dexscreener_data = await self.get_dexscreener_data(token_address)
-                    self.logger.info(f"[SCAN] DexScreener data: {bool(dexscreener_data)}")
-                except Exception as e:
-                    self.logger.error(f"[SCAN] DexScreener API error: {str(e)}")
-                
-                # Get combined token data
-                token_data = await self.get_token_data(token_address)
-                
+                # Get token data from DexScreener
+                token_data = await self.get_dexscreener_data(token_address)
                 if not token_data:
-                    self.logger.error("[SCAN] Could not fetch token data")
                     await ctx.send("❌ Could not fetch token data. Please try again later.")
                     return
-
-                # Add debug logging for embed creation
-                self.logger.info("[SCAN] Creating embed...")
-                try:
-                    embed = self.create_token_embed(token_data, token_address)
-                except Exception as e:
-                    self.logger.error(f"[SCAN] Error creating embed: {str(e)}")
-                    raise
                 
-                # Add debug logging for response
-                self.logger.info("[SCAN] Sending response...")
+                # Create and send embed
+                embed = self.create_token_embed(token_data, token_address)
                 await ctx.send(embed=embed)
                 
-                # Save scan to database
+                # Save scan info
                 try:
                     mcap = float(token_data.get('mcap', '0').replace('$', '').replace(',', ''))
                     scan_info = await self.format_scan_info(ctx, token_data, mcap)

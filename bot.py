@@ -29,6 +29,8 @@ class MemeWatchBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.messages = True
+        intents.guilds = True
         
         super().__init__(command_prefix='$', intents=intents)
         self.db = DatabaseManager()
@@ -36,13 +38,11 @@ class MemeWatchBot(commands.Bot):
         
     async def setup_hook(self):
         """Load cogs and setup bot"""
-        cogs_to_load = [
-            'security',
-            'solana',
-            'analyzer'
-        ]
+        # Initialize aiohttp session
+        self.session = aiohttp.ClientSession()
         
-        for cog in cogs_to_load:
+        # Load cogs
+        for cog in ['security', 'solana']:  # Temporarily remove analyzer
             try:
                 await self.load_extension(f'cogs.{cog}')
                 logger.info(f"Loaded {cog}.py")
