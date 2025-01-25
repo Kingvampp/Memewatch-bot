@@ -22,6 +22,7 @@ class AnalyzerCog(commands.Cog):
             )
         else:
             self.claude = None
+            self.logger.warning("CLAUDE_API_KEY not set. Analyzer functionality will be limited.")
         
     @commands.command(name='quant')
     @commands.cooldown(1, 60, commands.BucketType.user)
@@ -60,36 +61,39 @@ class AnalyzerCog(commands.Cog):
                 img_byte_arr = img_byte_arr.getvalue()
                 
                 # Get analysis from Claude
-                response = await self.claude.messages.create(
-                    model="claude-3-opus-20240229",
-                    max_tokens=1000,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Analyze this price chart and provide technical analysis. Focus on key support/resistance levels, trend direction, and potential entry/exit points. Be concise."
-                            },
-                            {
-                                "type": "image",
-                                "image": img_byte_arr
-                            }
-                        ]
-                    }]
-                )
-                
-                analysis = response.content[0].text
-                
-                # Create embed
-                embed = discord.Embed(
-                    title="Chart Analysis",
-                    description=analysis,
-                    color=discord.Color.blue()
-                )
-                embed.set_thumbnail(url=attachment.url)
-                
-                await ctx.send(embed=embed)
-                
+                if self.claude:
+                    response = await self.claude.messages.create(
+                        model="claude-3-opus-20240229",
+                        max_tokens=1000,
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Analyze this price chart and provide technical analysis. Focus on key support/resistance levels, trend direction, and potential entry/exit points. Be concise."
+                                },
+                                {
+                                    "type": "image",
+                                    "image": img_byte_arr
+                                }
+                            ]
+                        }]
+                    )
+                    
+                    analysis = response.content[0].text
+                    
+                    # Create embed
+                    embed = discord.Embed(
+                        title="Chart Analysis",
+                        description=analysis,
+                        color=discord.Color.blue()
+                    )
+                    embed.set_thumbnail(url=attachment.url)
+                    
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send("❌ Claude API key not configured. Analysis cannot be performed.")
+                    
         except Exception as e:
             self.logger.error(f"Analysis error: {str(e)}")
             self.logger.error(traceback.format_exc())

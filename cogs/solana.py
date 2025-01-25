@@ -17,16 +17,28 @@ import traceback
 class Solana(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.dexscreener_api = "https://api.dexscreener.com/latest/dex"
         self.birdeye_api = "https://public-api.birdeye.so/public"
         self.solscan_api = "https://public-api.solscan.io"
-        self.last_scan = {}  # Rate limiting
         self.logger = logging.getLogger('solana')
         self.session = None
+        self.last_scan = {}  # Rate limiting
         self.db = bot.db  # Get database reference from bot
         
         # Add API keys from environment
         self.birdeye_key = os.getenv('BIRDEYE_API_KEY')
         self.solscan_key = os.getenv('SOLSCAN_API_KEY')
+        
+        # Common token addresses
+        self.token_addresses = {
+            'sol': 'So11111111111111111111111111111111111111112',
+            'solana': 'So11111111111111111111111111111111111111112',
+            'wif': 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+            'bonk': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+            'jup': 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+            'ufd': 'UFDGgD31XVrEUpDQZXxGbqbW7EhxgMWHpxBhVoqGsqB',
+            'me': 'MEFNBXixkEbait3xn9bkm8WsJzXtVsaJEn4c8Sam21u'
+        }
         
     async def cog_load(self):
         """Initialize aiohttp session with headers"""
@@ -50,100 +62,145 @@ class Solana(commands.Cog):
         self.last_scan[user_id] = now
         return True
 
-    async def get_dexscreener_data(self, token_address):
-        """Fetch data from DexScreener API"""
-        try:
-            url = f"{os.getenv('DEXSCREENER_URL')}/tokens/{token_address}"
-            async with self.session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    pairs = data.get('pairs', [])
-                    if pairs:
-                        # Get the most liquid pair
-                        pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
-                        return {
-                            'price': float(pair.get('priceUsd', 0)),
-                            'price_change_1h': float(pair.get('priceChange', {}).get('h1', 0)),
-                            'price_change_4h': float(pair.get('priceChange', {}).get('h4', 0)),
-                            'liquidity_usd': float(pair.get('liquidity', {}).get('usd', 0)),
-                            'volume_24h': float(pair.get('volume', {}).get('h24', 0)),
-                            'ath_price': float(pair.get('priceUsd', {}).get('h24', 0)),
-                            'ath_timestamp': pair.get('athTimestamp'),
-                        }
-        except Exception as e:
-            self.logger.error(f"DexScreener API error: {str(e)}")
-        return None
-
     async def get_token_data(self, token_address):
-        """Fetch token data from multiple sources with retries"""
+        """Fetch token data from multiple sources"""
         if not self.session:
             self.session = aiohttp.ClientSession()
         
         try:
-            # Get data from multiple sources
-            birdeye_data = await self.get_birdeye_data(token_address)
-            solscan_data = await self.get_solscan_data(token_address)
-            dexscreener_data = await self.get_dexscreener_data(token_address)
-            
-            # Combine data with priority (DexScreener > Birdeye > Solscan)
-            token_data = {}
-            if birdeye_data:
-                token_data.update(birdeye_data)
-            if solscan_data:
-                token_data.update(solscan_data)
-            if dexscreener_data:
-                # Update specific fields from DexScreener
-                token_data.update({
-                    'price_change_1h': dexscreener_data['price_change_1h'],
-                    'price_change_4h': dexscreener_data['price_change_4h'],
-                    'ath_price': dexscreener_data['ath_price'],
-                    'ath_timestamp': dexscreener_data['ath_timestamp']
-                })
-            
-            return token_data
+            # Get data from DexScreener
+            url = f"{self.dexscreener_api}/pairs/solana/{token_address}"
+            async with self.session.get(url) as response:
+                if response.status != 200:
+                    return None
+                data = await response.json()
+                pairs = data.get('pairs', [])
+                if not pairs:
+                    return None
+                    
+                # Get the most liquid pair
+                pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
+                
+                # Format the data
+                return {
+                    'symbol': pair['baseToken']['symbol'],
+                    'name': pair['baseToken']['name'],
+                    'price': float(pair['priceUsd']),
+                    'price_change_24h': float(pair['priceChange']['h24']),
+                    'mcap': float(pair['marketCap']),
+                    'fdv': float(pair.get('fdv', 0)),
+                    'volume_24h': float(pair['volume']['h24']),
+                    'liquidity': float(pair['liquidity']['usd']),
+                    'created_at': pair['pairCreatedAt'],
+                    'dexes': [pair['dexId']],
+                    'pair_address': pair['pairAddress']
+                }
+                
         except Exception as e:
             self.logger.error(f"Error fetching token data: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
 
-    async def get_solscan_data(self, token_address):
-        """Fetch additional data from Solscan"""
+    def format_message(self, data):
+        """Format token data for Discord message"""
         try:
-            url = f"{self.solscan_api}/token/{token_address}"
-            async with self.session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return {
-                        'holder_count': data.get('holder', 0),
-                        'creation_date': data.get('creation_date'),
-                        'verified': data.get('verified', False)
-                    }
+            embed = discord.Embed(
+                title=f"{data['symbol']}/SOL",
+                description=f"{data['name']} Price and Analytics",
+                color=discord.Color.green() if data['price_change_24h'] >= 0 else discord.Color.red()
+            )
+            
+            # Add fields
+            embed.add_field(
+                name="💰 Price",
+                value=f"${data['price']:.10f}" if data['price'] < 0.000001 else f"${data['price']:.6f}",
+                inline=True
+            )
+            embed.add_field(
+                name="📈 24h Change",
+                value=f"{data['price_change_24h']:+.2f}%",
+                inline=True
+            )
+            embed.add_field(
+                name="💎 Market Cap",
+                value=f"${data['mcap']:,.0f}",
+                inline=True
+            )
+            embed.add_field(
+                name="💫 FDV",
+                value=f"${data['fdv']:,.0f}",
+                inline=True
+            )
+            embed.add_field(
+                name="💧 Liquidity",
+                value=f"${data['liquidity']:,.0f}",
+                inline=True
+            )
+            embed.add_field(
+                name="📊 24h Volume",
+                value=f"${data['volume_24h']:,.0f}",
+                inline=True
+            )
+            
+            # Add links
+            embed.add_field(
+                name="🔗 Links",
+                value=(
+                    f"[DexScreener](https://dexscreener.com/solana/{data['pair_address']}) • "
+                    f"[Birdeye](https://birdeye.so/token/{data['pair_address']}) • "
+                    f"[Solscan](https://solscan.io/token/{data['pair_address']})"
+                ),
+                inline=False
+            )
+            
+            return embed
+            
         except Exception as e:
-            self.logger.error(f"Solscan API error: {str(e)}")
+            self.logger.error(f"Error formatting message: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
 
-    def process_token_data(self, data):
-        """Process and format token data with error handling"""
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Handle $ commands"""
+        if message.author.bot:
+            return
+            
+        if not message.content.startswith('$'):
+            return
+            
+        # Get token symbol/address
+        token_id = message.content[1:].strip().lower()
+        if not token_id:
+            return
+            
+        # Check rate limit
+        if not await self._check_rate_limit(message.author.id):
+            await message.channel.send("⏳ Please wait before scanning another token")
+            return
+            
         try:
-            if not data:
-                return None
-                
-            return {
-                'symbol': data.get('symbol', 'Unknown'),
-                'name': data.get('name', 'Unknown Token'),
-                'price': format_price(data.get('price', 0)),
-                'price_change_24h': format_percentage(data.get('priceChange24h', 0)),
-                'mcap': format_number(data.get('marketCap', 0)),
-                'fdv': format_number(data.get('fdv', 0)),
-                'volume': format_number(data.get('volume24h', 0)),
-                'liquidity': format_number(data.get('liquidity', 0)),
-                'holders': format_number(data.get('holderCount', 0)),
-                'created_at': format_time_ago(data.get('createdAt', 0)),
-                'age': format_time_ago(data.get('createdAt', 0)),
-                'dexes': data.get('dexes', [])
-            }
+            # Get token address
+            token_address = self.token_addresses.get(token_id, token_id)
+            
+            async with message.channel.typing():
+                # Get token data
+                token_data = await self.get_token_data(token_address)
+                if not token_data:
+                    await message.channel.send(f"❌ Could not find token information for {token_id}")
+                    return
+                    
+                # Format and send message
+                embed = self.format_message(token_data)
+                if embed:
+                    await message.channel.send(embed=embed)
+                else:
+                    await message.channel.send("❌ Error formatting token information")
+                    
         except Exception as e:
-            self.logger.error(f"Data processing error: {str(e)}")
-            return None
+            self.logger.error(f"Error processing token command: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            await message.channel.send("❌ An error occurred while processing your request")
 
     @commands.command(name='scan')
     @commands.cooldown(1, 30, commands.BucketType.user)
@@ -208,7 +265,7 @@ class Solana(commands.Cog):
 💎 FDV: {format_number(float(data['fdv']))}
 💫 MC: {format_number(float(data['mcap']))} ➡︎ ATH: {format_number(float(ath_mcap))} [{ath_time}]
 💦 Liq: {format_number(float(data['liquidity']))}
-📊 Vol: {format_number(float(data['volume']))} 🕰️ Age: {data['age']}
+📊 Vol: {format_number(float(data['volume_24h']))} 🕰️ Age: {data['created_at']}
 🚀 1H: {format_percentage(price_changes['1h'])} 🚀 4H: {format_percentage(price_changes['4h'])}
 
 {address}
@@ -231,11 +288,11 @@ class Solana(commands.Cog):
     async def format_scan_info(self, ctx, token_data, mcap):
         """Format scan information for display"""
         try:
-            scan_info = await self.db.get_scan_info(token_data['address'], str(ctx.guild.id))
+            scan_info = await self.db.get_scan_info(token_data['pair_address'], str(ctx.guild.id))
             
             if not scan_info:
                 # First scan
-                await self.db.save_scan(token_data['address'], ctx.author.id, mcap, str(ctx.guild.id))
+                await self.db.save_scan(token_data['pair_address'], ctx.author.id, mcap, str(ctx.guild.id))
                 return f"{ctx.author.name} you are first in this server @ {self.format_number(mcap)}"
             else:
                 first_scanner_id, scan_time, first_mcap = scan_info

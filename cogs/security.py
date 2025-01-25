@@ -18,8 +18,12 @@ class SecurityCog(commands.Cog):
             async with self.session.get(
                 f"https://api.gopluslabs.io/api/v1/token_security/{chain}/{contract_address}"
             ) as response:
-                data = await response.json()
-                return data.get('result', {})
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get('result', {})
+                else:
+                    self.logger.error(f"Failed to fetch honeypot data: {response.status}")
+                    return None
         except Exception as e:
             self.logger.error(f"Honeypot check failed: {e}")
             return None
@@ -31,16 +35,20 @@ class SecurityCog(commands.Cog):
             async with self.session.get(
                 f"https://api.gopluslabs.io/api/v1/token_security/{chain}/{contract_address}"
             ) as response:
-                data = await response.json()
-                security_info = data.get('result', {})
-                
-                # Check for locked liquidity info
-                locked_info = {
-                    'is_locked': security_info.get('lp_holders', [{}])[0].get('is_locked', 0) == 1,
-                    'lock_time': security_info.get('lp_holders', [{}])[0].get('lock_time', 0),
-                    'locked_percent': security_info.get('lp_holders', [{}])[0].get('percent', 0)
-                }
-                return locked_info
+                if response.status == 200:
+                    data = await response.json()
+                    security_info = data.get('result', {})
+                    
+                    # Check for locked liquidity info
+                    locked_info = {
+                        'is_locked': security_info.get('lp_holders', [{}])[0].get('is_locked', 0) == 1,
+                        'lock_time': security_info.get('lp_holders', [{}])[0].get('lock_time', 0),
+                        'locked_percent': security_info.get('lp_holders', [{}])[0].get('percent', 0)
+                    }
+                    return locked_info
+                else:
+                    self.logger.error(f"Failed to fetch liquidity lock data: {response.status}")
+                    return None
         except Exception as e:
             self.logger.error(f"Liquidity lock check failed: {e}")
             return None
@@ -58,28 +66,32 @@ class SecurityCog(commands.Cog):
             async with self.session.get(
                 f"https://api.gopluslabs.io/api/v1/token_security/{chain}/{contract_address}"
             ) as response:
-                data = await response.json()
-                security_info = data.get('result', {})
-                
-                # Check ownership
-                if security_info.get('owner_address') == contract_address:
-                    risk_factors['low_risk'].append("Contract ownership renounced")
+                if response.status == 200:
+                    data = await response.json()
+                    security_info = data.get('result', {})
+                    
+                    # Check ownership
+                    if security_info.get('owner_address') == contract_address:
+                        risk_factors['low_risk'].append("Contract ownership renounced")
+                    else:
+                        risk_factors['medium_risk'].append("Contract has an owner")
+                    
+                    # Check mint function
+                    if security_info.get('mint_function', 0) == 1:
+                        risk_factors['high_risk'].append("Contract can mint new tokens")
+                    
+                    # Check proxy status
+                    if security_info.get('is_proxy', 0) == 1:
+                        risk_factors['high_risk'].append("Contract is a proxy (can be modified)")
+                    
+                    # Check trading cooldown
+                    if security_info.get('trading_cooldown', 0) == 1:
+                        risk_factors['medium_risk'].append("Trading cooldown enabled")
+                    
+                    return risk_factors
                 else:
-                    risk_factors['medium_risk'].append("Contract has an owner")
-                
-                # Check mint function
-                if security_info.get('mint_function', 0) == 1:
-                    risk_factors['high_risk'].append("Contract can mint new tokens")
-                
-                # Check proxy status
-                if security_info.get('is_proxy', 0) == 1:
-                    risk_factors['high_risk'].append("Contract is a proxy (can be modified)")
-                
-                # Check trading cooldown
-                if security_info.get('trading_cooldown', 0) == 1:
-                    risk_factors['medium_risk'].append("Trading cooldown enabled")
-                
-                return risk_factors
+                    self.logger.error(f"Failed to fetch rug pull risk data: {response.status}")
+                    return None
         except Exception as e:
             self.logger.error(f"Rug pull risk assessment failed: {e}")
             return None
