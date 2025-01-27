@@ -39,7 +39,7 @@ class Solana(commands.Cog):
             'bonk': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
             'jup': 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
             'ufd': 'UFDGgD31XVrEUpDQZXxGbqbW7EhxgMWHpxBhVoqGsqB',
-            'me': 'MEFNBXixkEbait3xn9bkm8WsJzXtVsaJEn4c8Sam21u'
+            'me': 'MEFNBXixkEbait3xn9bkm8WsJzXtVsaJEn4c8Sam21u'  # Verified ME token address
         }
 
     @commands.command(name='test')
@@ -129,44 +129,251 @@ class Solana(commands.Cog):
             self.logger.error(traceback.format_exc())
             return None
 
-    async def get_token_data(self, token_address):
-        """Fetch token data from DexScreener"""
+    async def get_jupiter_token_list(self):
+        """Fetch complete Jupiter token list"""
         try:
             if not self.session:
                 self.session = aiohttp.ClientSession()
-
-            # Try DexScreener first
-            dex_url = f"{self.dexscreener_api}/pairs/solana/{token_address}"
-            self.logger.info(f"Fetching from DexScreener: {dex_url}")
-            
-            async with self.session.get(dex_url) as response:
+                
+            # Main token list
+            url = "https://token.jup.ag/strict"  # Strict list for verified tokens
+            async with self.session.get(url) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    if data.get('pairs') and len(data['pairs']) > 0:
-                        pair = data['pairs'][0]
-                        return {
-                            'name': pair['baseToken']['name'],
-                            'symbol': pair['baseToken']['symbol'],
-                            'price': float(pair['priceUsd']),
-                            'price_change_1h': float(pair['priceChange']['h1'] or 0),
-                            'price_change_4h': float(pair['priceChange']['h4'] or 0),
-                            'price_change_24h': float(pair['priceChange']['h24'] or 0),
-                            'liquidity': float(pair['liquidity']['usd']),
-                            'volume_24h': float(pair['volume']['h24']),
-                            'fdv': float(pair.get('fdv', 0)),
-                            'mcap': float(pair.get('mcap', 0)),
-                            'pair_address': pair['pairAddress'],
-                            'created_at': pair.get('createTime'),
-                            'logo': pair['baseToken'].get('logoURI', '')
-                        }
+                    return await response.json()
+        except Exception as e:
+            self.logger.error(f"Error fetching Jupiter token list: {str(e)}")
+        return None
 
-            self.logger.error(f"No data found for token {token_address}")
-            return None
+    async def get_jupiter_price_data(self, token_address):
+        """Fetch comprehensive price data from Jupiter"""
+        try:
+            # Get real-time price with detailed metrics
+            price_url = f"https://price.jup.ag/v4/price?ids={token_address}&vsToken=So11111111111111111111111111111111111111112"
+            
+            # Get detailed market info
+            market_url = f"https://stats.jup.ag/coingecko/tokens/{token_address}"
+            
+            # Get OpenBook markets
+            openbook_url = f"https://stats.jup.ag/openbook/{token_address}"
+            
+            async with self.session.get(price_url) as price_response, \
+                      self.session.get(market_url) as market_response, \
+                      self.session.get(openbook_url) as openbook_response:
+                
+                price_data = await price_response.json() if price_response.status == 200 else {}
+                market_data = await market_response.json() if market_response.status == 200 else {}
+                openbook_data = await openbook_response.json() if openbook_response.status == 200 else {}
+                
+                return {
+                    'price_data': price_data,
+                    'market_data': market_data,
+                    'openbook_data': openbook_data
+                }
+        except Exception as e:
+            self.logger.error(f"Error fetching Jupiter price data: {str(e)}")
+        return None
+
+    async def get_jupiter_pool_data(self, token_address):
+        """Fetch comprehensive pool and DEX data"""
+        try:
+            # Get all pools
+            pools_url = f"https://stats.jup.ag/coingecko/pairs?base={token_address}"
+            
+            # Get Raydium pools
+            raydium_url = f"https://stats.jup.ag/raydium/{token_address}"
+            
+            # Get Orca pools
+            orca_url = f"https://stats.jup.ag/orca/{token_address}"
+            
+            async with self.session.get(pools_url) as pools_response, \
+                      self.session.get(raydium_url) as raydium_response, \
+                      self.session.get(orca_url) as orca_response:
+                
+                pools_data = await pools_response.json() if pools_response.status == 200 else []
+                raydium_data = await raydium_response.json() if raydium_response.status == 200 else {}
+                orca_data = await orca_response.json() if orca_response.status == 200 else {}
+                
+                # Combine and sort pools by liquidity
+                all_pools = []
+                
+                # Add Raydium pools
+                if isinstance(raydium_data, dict):
+                    for pool in raydium_data.values():
+                        all_pools.append({
+                            'name': 'Raydium',
+                            'liquidity': float(pool.get('liquidity', 0)),
+                            'volume_24h': float(pool.get('volume24h', 0)),
+                            'fee_24h': float(pool.get('fee24h', 0))
+                        })
+                
+                # Add Orca pools
+                if isinstance(orca_data, dict):
+                    for pool in orca_data.values():
+                        all_pools.append({
+                            'name': 'Orca',
+                            'liquidity': float(pool.get('liquidity', 0)),
+                            'volume_24h': float(pool.get('volume24h', 0)),
+                            'fee_24h': float(pool.get('fee24h', 0))
+                        })
+                
+                # Add other pools
+                for pool in pools_data:
+                    all_pools.append({
+                        'name': pool.get('name', 'Unknown'),
+                        'liquidity': float(pool.get('liquidity', 0)),
+                        'volume_24h': float(pool.get('volume24h', 0)),
+                        'fee_24h': float(pool.get('fee24h', 0))
+                    })
+                
+                # Sort pools by liquidity
+                all_pools.sort(key=lambda x: x['liquidity'], reverse=True)
+                
+                return all_pools
+                
+        except Exception as e:
+            self.logger.error(f"Error fetching Jupiter pool data: {str(e)}")
+        return None
+
+    async def get_token_data(self, token_address):
+        """Fetch comprehensive token data from Jupiter"""
+        try:
+            # Get all data concurrently
+            token_list, price_data, pool_data = await asyncio.gather(
+                self.get_jupiter_token_list(),
+                self.get_jupiter_price_data(token_address),
+                self.get_jupiter_pool_data(token_address)
+            )
+            
+            if not price_data or not price_data.get('price_data', {}).get('data', {}).get(token_address):
+                return None
+                
+            token_meta = token_list.get('tokens', {}).get(token_address, {}) if token_list else {}
+            price_info = price_data['price_data']['data'][token_address]
+            market_info = price_data['market_data']
+            
+            # Calculate total liquidity and volume
+            total_liquidity = sum(pool['liquidity'] for pool in pool_data) if pool_data else 0
+            total_volume = sum(pool['volume_24h'] for pool in pool_data) if pool_data else 0
+            total_fees = sum(pool['fee_24h'] for pool in pool_data) if pool_data else 0
+            
+            # Get top pools with detailed info
+            top_pools = pool_data[:3] if pool_data else []
+            pool_info = [
+                f"{pool['name']} (${self.format_number(pool['liquidity'])} - Vol: ${self.format_number(pool['volume_24h'])})"
+                for pool in top_pools
+            ]
+            
+            return {
+                'name': token_meta.get('name', 'Unknown'),
+                'symbol': token_meta.get('symbol', 'Unknown'),
+                'price': float(price_info.get('price', 0)),
+                'price_change_1h': float(market_info.get('price_change_percentage_1h', 0)),
+                'price_change_4h': float(market_info.get('price_change_percentage_4h', 0)),
+                'price_change_24h': float(market_info.get('price_change_percentage_24h', 0)),
+                'mcap': float(market_info.get('market_cap', 0)),
+                'fdv': float(market_info.get('fully_diluted_valuation', 0)),
+                'liquidity': total_liquidity,
+                'volume_24h': total_volume,
+                'fees_24h': total_fees,
+                'pair_address': token_address,
+                'logo': token_meta.get('logoURI', ''),
+                'created_at': market_info.get('created_at'),
+                'holders': market_info.get('holders', 'Unknown'),
+                'total_supply': market_info.get('total_supply', 'Unknown'),
+                'circulating_supply': market_info.get('circulating_supply', 'Unknown'),
+                'top_pools': pool_info,
+                'dexes': [
+                    f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
+                    f"[BIRDEYE](https://birdeye.so/token/{token_address})",
+                    f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})",
+                    f"[SOLSCAN](https://solscan.io/token/{token_address})"
+                ]
+            }
 
         except Exception as e:
-            self.logger.error(f"Error fetching token data: {str(e)}")
+            self.logger.error(f"Error in get_token_data: {str(e)}")
             self.logger.error(traceback.format_exc())
             return None
+
+    async def format_token_embed(self, token_data):
+        """Create a beautifully formatted embed for token data"""
+        try:
+            # Create main embed
+            embed = discord.Embed(
+                title=f"{token_data['symbol']}/SOL • {token_data['name']}",
+                color=discord.Color.green() if token_data['price_change_24h'] >= 0 else discord.Color.red()
+            )
+
+            # Price and Market Stats
+            price_info = (
+                f"💰 **Price:** ${token_data['price']:.10f}\n"
+                f"📊 **Changes:**\n"
+                f"• 1H: {token_data['price_change_1h']:+.2f}%\n"
+                f"• 4H: {token_data['price_change_4h']:+.2f}%\n"
+                f"• 24H: {token_data['price_change_24h']:+.2f}%\n"
+            )
+            embed.add_field(name="Price Information", value=price_info, inline=False)
+
+            # Market Metrics
+            market_info = (
+                f"💫 **Market Cap:** ${self.format_number(token_data['mcap'])}\n"
+                f"💎 **FDV:** ${self.format_number(token_data['fdv'])}\n"
+                f"💦 **Liquidity:** ${self.format_number(token_data['liquidity'])}\n"
+                f"📈 **24h Volume:** ${self.format_number(token_data['volume_24h'])}\n"
+                f"💰 **24h Fees:** ${self.format_number(token_data['fees_24h'])}\n"
+            )
+            embed.add_field(name="Market Metrics", value=market_info, inline=False)
+
+            # Supply Information
+            supply_info = (
+                f"🔄 **Circulating:** {self.format_number(token_data['circulating_supply'])}\n"
+                f"📊 **Total:** {self.format_number(token_data['total_supply'])}\n"
+                f"👥 **Holders:** {token_data['holders']}\n"
+            )
+            embed.add_field(name="Supply Info", value=supply_info, inline=False)
+
+            # Top Pools
+            if token_data['top_pools']:
+                pools_info = "\n".join([
+                    f"• {pool}" for pool in token_data['top_pools']
+                ])
+                embed.add_field(name="🌊 Top Liquidity Pools", value=pools_info, inline=False)
+
+            # Quick Links
+            links = "\n".join(token_data['dexes'])
+            embed.add_field(name="🔗 Quick Links", value=links, inline=False)
+
+            # Footer with address
+            embed.set_footer(text=f"Token: {token_data['pair_address']}")
+
+            # Set thumbnail if logo exists
+            if token_data.get('logo'):
+                embed.set_thumbnail(url=token_data['logo'])
+
+            return embed
+
+        except Exception as e:
+            self.logger.error(f"Error formatting embed: {str(e)}")
+            return None
+
+    def format_number(self, num):
+        """Format numbers with better readability"""
+        try:
+            num = float(num)
+            if num >= 1_000_000_000_000:
+                return f"{num/1_000_000_000_000:.2f}T"
+            elif num >= 1_000_000_000:
+                return f"{num/1_000_000_000:.2f}B"
+            elif num >= 1_000_000:
+                return f"{num/1_000_000:.2f}M"
+            elif num >= 1_000:
+                return f"{num/1_000:.2f}K"
+            elif num >= 1:
+                return f"{num:.2f}"
+            else:
+                return f"{num:.10f}".rstrip('0').rstrip('.')
+        except (ValueError, TypeError):
+            return "0.00"
 
     def format_message(self, data):
         """Format token data for Discord message"""
@@ -232,62 +439,77 @@ class Solana(commands.Cog):
             return
 
         if message.content.startswith('$'):
-            symbol = message.content[1:].lower()
+            token_input = message.content[1:].strip().lower()
             
-            if symbol in self.token_addresses:
-                token_address = self.token_addresses[symbol]
-                try:
-                    async with message.channel.typing():
-                        token_data = await self.get_token_data(token_address)
-                        
-                        if token_data:
-                            # Format the message
-                            description = (
-                                f"{token_data['name']} ({token_data['symbol']}/SOL)\n\n"
-                                f"💰 USD: ${token_data['price']:.10f}\n"
-                                f"💎 FDV: ${self.format_number(token_data['fdv'])}\n"
-                                f"💫 MC: ${self.format_number(token_data['mcap'])}\n"
-                                f"💧 Liq: ${self.format_number(token_data['liquidity'])}\n"
-                                f"📊 Vol: ${self.format_number(token_data['volume_24h'])} "
-                                f"🕒 Age: {format_time_ago(token_data['created_at'])}\n"
-                                f"📈 1H: {token_data['price_change_1h']}% • "
-                                f"4H: {token_data['price_change_4h']}% • "
-                                f"24H: {token_data['price_change_24h']}%\n\n"
-                                f"`{token_address}`\n\n"
-                                f"[DEX](https://dexscreener.com/solana/{token_data['pair_address']}) • "
-                                f"[BIRD](https://birdeye.so/token/{token_address}) • "
-                                f"[BLX](https://solscan.io/token/{token_address}) • "
-                                f"[SOL](https://solana.fm/address/{token_address}) • "
-                                f"[BNK](https://solanabeach.io/token/{token_address}) • "
-                                f"[JUP](https://jup.ag/swap/SOL-{token_address})"
-                            )
-
-                            # Create embed
-                            embed = discord.Embed(
-                                title=f"{token_data['symbol']}/SOL",
-                                description=description,
-                                color=discord.Color.green() if token_data['price_change_24h'] >= 0 else discord.Color.red()
-                            )
-
-                            if token_data.get('logo'):
-                                embed.set_thumbnail(url=token_data['logo'])
-
-                            await message.channel.send(embed=embed)
-
-                            # Format and send scan info
-                            scan_info = await self.format_scan_info(message, token_data, token_data['mcap'])
-                            if scan_info:
-                                await message.channel.send(scan_info)
-                        else:
-                            await message.channel.send(f"❌ Could not fetch data for ${symbol}")
+            try:
+                # Check if input is a valid Solana address
+                if len(token_input) == 44 or len(token_input) == 32:
+                    token_address = token_input
+                else:
+                    # Try to get token info from Jupiter
+                    meta_url = "https://token.jup.ag/all"
+                    async with self.session.get(meta_url) as response:
+                        if response.status == 200:
+                            tokens = await response.json()
+                            # Search for token by symbol
+                            token_address = None
+                            for addr, info in tokens.get('tokens', {}).items():
+                                if info.get('symbol', '').lower() == token_input:
+                                    token_address = addr
+                                    break
                             
-                except Exception as e:
-                    self.logger.error(f"Error processing {symbol}: {str(e)}")
-                    self.logger.error(traceback.format_exc())
-                    await message.channel.send(f"❌ Error processing ${symbol}")
+                            if not token_address:
+                                await message.channel.send(f"❌ Could not find token: ${token_input}")
+                                return
+
+                async with message.channel.typing():
+                    token_data = await self.get_token_data(token_address)
+                    if token_data:
+                        # Format the message
+                        description = (
+                            f"{token_data['name']} ({token_data['symbol']}/SOL)\n\n"
+                            f"💰 USD: ${token_data['price']:.10f}\n"
+                            f"💎 FDV: ${self.format_number(token_data['fdv'])}\n"
+                            f"💫 MC: ${self.format_number(token_data['mcap'])}\n"
+                            f"💧 Liq: ${self.format_number(token_data['liquidity'])}\n"
+                            f"📊 Vol: ${self.format_number(token_data['volume_24h'])} "
+                            f"🕒 Age: {format_time_ago(token_data['created_at'])}\n"
+                            f"📈 1H: {token_data['price_change_1h']}% • "
+                            f"24H: {token_data['price_change_24h']}%\n\n"
+                            f"`{token_address}`\n\n"
+                            f"[DEX](https://dexscreener.com/solana/{token_data['pair_address']}) • "
+                            f"[BIRD](https://birdeye.so/token/{token_address}) • "
+                            f"[BLX](https://solscan.io/token/{token_address}) • "
+                            f"[SOL](https://solana.fm/address/{token_address}) • "
+                            f"[BNK](https://solanabeach.io/token/{token_address}) • "
+                            f"[JUP](https://jup.ag/swap/SOL-{token_address})"
+                        )
+
+                        # Create embed
+                        embed = discord.Embed(
+                            title=f"{token_data['symbol']}/SOL",
+                            description=description,
+                            color=discord.Color.green() if token_data['price_change_24h'] >= 0 else discord.Color.red()
+                        )
+
+                        if token_data.get('logo'):
+                            embed.set_thumbnail(url=token_data['logo'])
+
+                        await message.channel.send(embed=embed)
+
+                        # Format and send scan info
+                        scan_info = await self.format_scan_info(message, token_data, token_data['mcap'])
+                        if scan_info:
+                            await message.channel.send(scan_info)
+                    else:
+                        await message.channel.send(f"❌ Could not fetch data for ${token_input}")
+            except Exception as e:
+                self.logger.error(f"Error processing ${token_input}: {str(e)}")
+                self.logger.error(traceback.format_exc())
+                await message.channel.send(f"❌ Error processing ${token_input}")
             else:
-                if len(symbol) <= 10:
-                    await message.channel.send(f"❌ Unknown token symbol: ${symbol}")
+                if len(token_input) <= 10:
+                    await message.channel.send(f"❌ Unknown token symbol: ${token_input}")
 
     @commands.command(name='ping')
     async def ping(self, ctx):
@@ -318,7 +540,7 @@ class Solana(commands.Cog):
             embed.add_field(name="", value=f"""
 💰 USD: {format_price(float(data['price']))}
 💎 FDV: {format_number(float(data['mcap']))}
-💫 MC: {format_number(float(data['mcap']))} ➡︎ ATH: {format_number(float(ath_mcap))} [{ath_time}]
+💎 MC: {format_number(float(data['mcap']))} ➡︎ ATH: {format_number(float(ath_mcap))} [{ath_time}]
 💦 Liq: {format_number(float(data['liquidity']))}
 📊 Vol: {format_number(float(data['volume_24h']))} 🕰️ Age: {data['created_at']}
 🚀 1H: {format_percentage(price_changes['1h'])} 🚀 4H: {format_percentage(price_changes['4h'])}
