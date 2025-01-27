@@ -15,6 +15,8 @@ from utils.formatting import (
 import traceback
 
 class Solana(commands.Cog):
+    """Solana token tracking commands"""
+    
     def __init__(self, bot):
         self.bot = bot
         self.dexscreener_api = "https://api.dexscreener.com/latest/dex"
@@ -22,13 +24,13 @@ class Solana(commands.Cog):
         self.solscan_api = "https://public-api.solscan.io"
         self.logger = logging.getLogger('solana')
         self.session = None
-        self.last_scan = {}  # Rate limiting
-        self.db = bot.db  # Get database reference from bot
+        self.last_scan = {}
+        self.db = bot.db
         
-        # Add API keys from environment
+        # API keys
         self.birdeye_key = os.getenv('BIRDEYE_API_KEY')
         self.solscan_key = os.getenv('SOLSCAN_API_KEY')
-        
+
         # Common token addresses
         self.token_addresses = {
             'sol': 'So11111111111111111111111111111111111111112',
@@ -39,7 +41,23 @@ class Solana(commands.Cog):
             'ufd': 'UFDGgD31XVrEUpDQZXxGbqbW7EhxgMWHpxBhVoqGsqB',
             'me': 'MEFNBXixkEbait3xn9bkm8WsJzXtVsaJEn4c8Sam21u'
         }
-        
+
+    @commands.command(name='test')
+    async def test(self, ctx):
+        """Simple test command"""
+        await ctx.send("Bot is working!")
+
+    @commands.command(name='scan')
+    async def scan(self, ctx, address: str):
+        """Scan a Solana token"""
+        try:
+            self.logger.info(f"Scan command received for {address}")
+            await ctx.send(f"Scanning token: {address}...")
+            # Rest of scan logic
+        except Exception as e:
+            self.logger.error(f"Error in scan command: {str(e)}")
+            await ctx.send("❌ An error occurred while scanning.")
+
     async def cog_load(self):
         """Initialize aiohttp session with headers"""
         headers = {
@@ -62,44 +80,134 @@ class Solana(commands.Cog):
         self.last_scan[user_id] = now
         return True
 
-    async def get_token_data(self, token_address):
-        """Fetch token data from multiple sources"""
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-        
+    async def get_jupiter_data(self, token_address):
+        """Comprehensive Jupiter API data fetching"""
         try:
-            # Get data from DexScreener
-            url = f"{self.dexscreener_api}/pairs/solana/{token_address}"
-            async with self.session.get(url) as response:
-                if response.status != 200:
-                    return None
-                data = await response.json()
-                pairs = data.get('pairs', [])
-                if not pairs:
-                    return None
+            # Price and market data
+            price_url = f"https://price.jup.ag/v4/price?ids={token_address}&vsToken=So11111111111111111111111111111111111111112"
+            
+            # Token metadata
+            meta_url = "https://token.jup.ag/all"
+            
+            # Get top pools/routes
+            routes_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=1000000000&slippageBps=50"
+            
+            async with aiohttp.ClientSession() as session:
+                # Fetch price data
+                async with session.get(price_url) as price_response:
+                    if price_response.status != 200:
+                        return None
+                    price_data = await price_response.json()
                     
-                # Get the most liquid pair
-                pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
+                # Fetch metadata
+                async with session.get(meta_url) as meta_response:
+                    if meta_response.status != 200:
+                        return None
+                    meta_data = await meta_response.json()
+                    
+                # Fetch routing data
+                async with session.get(routes_url) as routes_response:
+                    if routes_response.status != 200:
+                        return None
+                    routes_data = await routes_response.json()
+                    
+                # Process the data
+                token_price = price_data.get('data', {}).get(token_address, {})
+                token_meta = meta_data.get('tokens', {}).get(token_address, {})
+                routes = routes_data.get('data', [])
                 
-                # Format the data
+                # Get best pools from routes
+                pools = []
+                if routes:
+                    for market in routes[0].get('marketInfos', [])[:3]:  # Top 3 pools
+                        pools.append(f"{market.get('label', 'Unknown')} ({market.get('liquidity', '0')})")
+                
                 return {
-                    'symbol': pair['baseToken']['symbol'],
-                    'name': pair['baseToken']['name'],
-                    'price': float(pair['priceUsd']),
-                    'price_change_24h': float(pair['priceChange']['h24']),
-                    'mcap': float(pair['marketCap']),
-                    'fdv': float(pair.get('fdv', 0)),
-                    'volume_24h': float(pair['volume']['h24']),
-                    'liquidity': float(pair['liquidity']['usd']),
-                    'created_at': pair['pairCreatedAt'],
-                    'dexes': [pair['dexId']],
-                    'pair_address': pair['pairAddress']
+                    'name': token_meta.get('name', 'Unknown'),
+                    'symbol': token_meta.get('symbol', 'Unknown'),
+                    'price': token_price.get('price', 0),
+                    'price_change': token_price.get('priceChange24h', 0),
+                    'liquidity': sum(float(market.get('liquidity', 0)) for market in routes[0].get('marketInfos', [])) if routes else 0,
+                    'volume_24h': token_price.get('volume24h', 0),
+                    'mcap': token_price.get('marketCap', 0),
+                    'pair_address': token_address,
+                    'created_at': 'Unknown',
+                    'logo': token_meta.get('logoURI', ''),
+                    'decimals': token_meta.get('decimals', 9),
+                    'top_pools': pools,
+                    'dexes': [
+                        f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
+                        f"[BIRDEYE](https://birdeye.so/token/{token_address})",
+                        f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})",
+                        f"[SOLSCAN](https://solscan.io/token/{token_address})"
+                    ]
                 }
                 
         except Exception as e:
-            self.logger.error(f"Error fetching token data: {str(e)}")
+            self.logger.error(f"Jupiter API error: {str(e)}")
             self.logger.error(traceback.format_exc())
             return None
+
+    async def get_token_data(self, token_address):
+        """Fetch token data prioritizing Jupiter API"""
+        # Try Jupiter first
+        jupiter_data = await self.get_jupiter_data(token_address)
+        if jupiter_data:
+            return jupiter_data
+            
+        # If Jupiter fails, try DexScreener
+        dex_url = f"{self.dexscreener_api}/pairs/solana/{token_address}"
+        async with self.session.get(dex_url) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get('pairs') and len(data['pairs']) > 0:
+                    pair = data['pairs'][0]
+                    return {
+                        'name': pair['baseToken']['name'],
+                        'symbol': pair['baseToken']['symbol'],
+                        'price': float(pair['priceUsd']),
+                        'price_change': float(pair['priceChange']['h24']),
+                        'liquidity': float(pair['liquidity']['usd']),
+                        'volume_24h': float(pair['volume']['h24']),
+                        'mcap': float(pair.get('fdv', 0)),
+                        'pair_address': pair['pairAddress'],
+                        'created_at': pair.get('createTime', ''),
+                        'logo': pair['baseToken'].get('logoURI', ''),
+                        'dexes': [
+                            f"[{pair['dexId'].upper()}](https://dexscreener.com/solana/{pair['pairAddress']})",
+                            f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
+                            f"[BIRDEYE](https://birdeye.so/token/{token_address})"
+                        ]
+                    }
+
+        # Finally, try Birdeye
+        bird_url = f"{self.birdeye_api}/token/info?address={token_address}"
+        headers = {'X-API-KEY': self.birdeye_key}
+        async with self.session.get(bird_url, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get('success') and data.get('data'):
+                    token = data['data']
+                    return {
+                        'name': token.get('name', 'Unknown'),
+                        'symbol': token.get('symbol', 'Unknown'),
+                        'price': float(token.get('price', 0)),
+                        'price_change': float(token.get('priceChange24h', 0)),
+                        'liquidity': float(token.get('liquidity', 0)),
+                        'volume_24h': float(token.get('volume24h', 0)),
+                        'mcap': float(token.get('marketCap', 0)),
+                        'pair_address': token_address,
+                        'created_at': 'Unknown',
+                        'logo': token.get('logoURI', ''),
+                        'dexes': [
+                            f"[BIRDEYE](https://birdeye.so/token/{token_address})",
+                            f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
+                            f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})"
+                        ]
+                    }
+
+        self.logger.warning(f"Could not fetch data for token {token_address}")
+        return None
 
     def format_message(self, data):
         """Format token data for Discord message"""
@@ -107,7 +215,7 @@ class Solana(commands.Cog):
             embed = discord.Embed(
                 title=f"{data['symbol']}/SOL",
                 description=f"{data['name']} Price and Analytics",
-                color=discord.Color.green() if data['price_change_24h'] >= 0 else discord.Color.red()
+                color=discord.Color.green() if data['price_change'] >= 0 else discord.Color.red()
             )
             
             # Add fields
@@ -118,7 +226,7 @@ class Solana(commands.Cog):
             )
             embed.add_field(
                 name="📈 24h Change",
-                value=f"{data['price_change_24h']:+.2f}%",
+                value=f"{data['price_change']:+.2f}%",
                 inline=True
             )
             embed.add_field(
@@ -128,7 +236,7 @@ class Solana(commands.Cog):
             )
             embed.add_field(
                 name="💫 FDV",
-                value=f"${data['fdv']:,.0f}",
+                value=f"${data['mcap']:,.0f}",
                 inline=True
             )
             embed.add_field(
@@ -146,9 +254,7 @@ class Solana(commands.Cog):
             embed.add_field(
                 name="🔗 Links",
                 value=(
-                    f"[DexScreener](https://dexscreener.com/solana/{data['pair_address']}) • "
-                    f"[Birdeye](https://birdeye.so/token/{data['pair_address']}) • "
-                    f"[Solscan](https://solscan.io/token/{data['pair_address']})"
+                    f"{data['dexes'][0]} • {data['dexes'][1]} • {data['dexes'][2]}"
                 ),
                 inline=False
             )
@@ -162,77 +268,41 @@ class Solana(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        """Handle $ commands"""
+        """Handle $symbol messages"""
         if message.author.bot:
             return
-            
-        if not message.content.startswith('$'):
-            return
-            
-        # Get token symbol/address
-        token_id = message.content[1:].strip().lower()
-        if not token_id:
-            return
-            
-        # Check rate limit
-        if not await self._check_rate_limit(message.author.id):
-            await message.channel.send("⏳ Please wait before scanning another token")
-            return
-            
-        try:
-            # Get token address
-            token_address = self.token_addresses.get(token_id, token_id)
-            
-            async with message.channel.typing():
-                # Get token data
-                token_data = await self.get_token_data(token_address)
-                if not token_data:
-                    await message.channel.send(f"❌ Could not find token information for {token_id}")
-                    return
-                    
-                # Format and send message
-                embed = self.format_message(token_data)
-                if embed:
-                    await message.channel.send(embed=embed)
-                else:
-                    await message.channel.send("❌ Error formatting token information")
-                    
-        except Exception as e:
-            self.logger.error(f"Error processing token command: {str(e)}")
-            self.logger.error(traceback.format_exc())
-            await message.channel.send("❌ An error occurred while processing your request")
 
-    @commands.command(name='scan')
-    @commands.cooldown(1, 30, commands.BucketType.user)
-    async def scan_token(self, ctx, token_address: str):
-        """Scan a token and display its information"""
-        try:
-            self.logger.info(f"[SCAN] Command received from {ctx.author.name} for token: {token_address}")
+        # Check if message starts with $ and is a token symbol
+        if message.content.startswith('$'):
+            symbol = message.content[1:].lower()  # Remove $ and convert to lowercase
             
-            if not self.validate_token_address(token_address):
-                await ctx.send("❌ Invalid token address format.")
-                return
-                
-            async with ctx.typing():
-                token_data = await self.get_token_data(token_address)
-                if not token_data:
-                    await ctx.send("❌ Could not fetch token data. Please try again later.")
-                    return
-                
-                # Create and send embed
-                embed = self.create_token_embed(token_data, token_address)
-                await ctx.send(embed=embed)
-                
-                # Format and send scan info
-                mcap = float(token_data.get('mcap', 0))
-                scan_info = await self.format_scan_info(ctx, token_data, mcap)
-                if scan_info:
-                    await ctx.send(scan_info)
-                    
-        except Exception as e:
-            self.logger.error(f"[SCAN] Command error: {str(e)}")
-            self.logger.error(traceback.format_exc())
-            await ctx.send("❌ An error occurred while scanning the token.")
+            # Debug logging
+            self.logger.info(f"Received token symbol request: {symbol}")
+            
+            # Check if symbol exists in our token addresses
+            if symbol in self.token_addresses:
+                token_address = self.token_addresses[symbol]
+                try:
+                    async with message.channel.typing():
+                        token_data = await self.get_token_data(token_address)
+                        if token_data:
+                            embed = self.create_token_embed(token_data, token_address)
+                            await message.channel.send(embed=embed)
+                            
+                            # Format and send scan info
+                            mcap = float(token_data.get('mcap', 0))
+                            scan_info = await self.format_scan_info(message, token_data, mcap)
+                            if scan_info:
+                                await message.channel.send(scan_info)
+                        else:
+                            await message.channel.send(f"❌ Could not fetch data for ${symbol}")
+                except Exception as e:
+                    self.logger.error(f"Error processing token symbol {symbol}: {str(e)}")
+                    await message.channel.send(f"❌ Error fetching data for ${symbol}")
+            else:
+                # Only respond if it looks like a token request
+                if len(symbol) <= 10:  # Reasonable symbol length
+                    await message.channel.send(f"❌ Unknown token symbol: ${symbol}")
 
     @commands.command(name='ping')
     async def ping(self, ctx):
@@ -262,7 +332,7 @@ class Solana(commands.Cog):
             embed = discord.Embed(title=f"{data['symbol']}/SOL", description=data['name'])
             embed.add_field(name="", value=f"""
 💰 USD: {format_price(float(data['price']))}
-💎 FDV: {format_number(float(data['fdv']))}
+💎 FDV: {format_number(float(data['mcap']))}
 💫 MC: {format_number(float(data['mcap']))} ➡︎ ATH: {format_number(float(ath_mcap))} [{ath_time}]
 💦 Liq: {format_number(float(data['liquidity']))}
 📊 Vol: {format_number(float(data['volume_24h']))} 🕰️ Age: {data['created_at']}
