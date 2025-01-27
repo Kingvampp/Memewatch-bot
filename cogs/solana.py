@@ -130,65 +130,43 @@ class Solana(commands.Cog):
             return None
 
     async def get_token_data(self, token_address):
-        """Fetch token data prioritizing Jupiter API"""
-        # Try Jupiter first
-        jupiter_data = await self.get_jupiter_data(token_address)
-        if jupiter_data:
-            return jupiter_data
+        """Fetch token data from DexScreener"""
+        try:
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
+            # Try DexScreener first
+            dex_url = f"{self.dexscreener_api}/pairs/solana/{token_address}"
+            self.logger.info(f"Fetching from DexScreener: {dex_url}")
             
-        # If Jupiter fails, try DexScreener
-        dex_url = f"{self.dexscreener_api}/pairs/solana/{token_address}"
-        async with self.session.get(dex_url) as response:
-            if response.status == 200:
-                data = await response.json()
-                if data.get('pairs') and len(data['pairs']) > 0:
-                    pair = data['pairs'][0]
-                    return {
-                        'name': pair['baseToken']['name'],
-                        'symbol': pair['baseToken']['symbol'],
-                        'price': float(pair['priceUsd']),
-                        'price_change': float(pair['priceChange']['h24']),
-                        'liquidity': float(pair['liquidity']['usd']),
-                        'volume_24h': float(pair['volume']['h24']),
-                        'mcap': float(pair.get('fdv', 0)),
-                        'pair_address': pair['pairAddress'],
-                        'created_at': pair.get('createTime', ''),
-                        'logo': pair['baseToken'].get('logoURI', ''),
-                        'dexes': [
-                            f"[{pair['dexId'].upper()}](https://dexscreener.com/solana/{pair['pairAddress']})",
-                            f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
-                            f"[BIRDEYE](https://birdeye.so/token/{token_address})"
-                        ]
-                    }
+            async with self.session.get(dex_url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('pairs') and len(data['pairs']) > 0:
+                        pair = data['pairs'][0]
+                        return {
+                            'name': pair['baseToken']['name'],
+                            'symbol': pair['baseToken']['symbol'],
+                            'price': float(pair['priceUsd']),
+                            'price_change_1h': float(pair['priceChange']['h1'] or 0),
+                            'price_change_4h': float(pair['priceChange']['h4'] or 0),
+                            'price_change_24h': float(pair['priceChange']['h24'] or 0),
+                            'liquidity': float(pair['liquidity']['usd']),
+                            'volume_24h': float(pair['volume']['h24']),
+                            'fdv': float(pair.get('fdv', 0)),
+                            'mcap': float(pair.get('mcap', 0)),
+                            'pair_address': pair['pairAddress'],
+                            'created_at': pair.get('createTime'),
+                            'logo': pair['baseToken'].get('logoURI', '')
+                        }
 
-        # Finally, try Birdeye
-        bird_url = f"{self.birdeye_api}/token/info?address={token_address}"
-        headers = {'X-API-KEY': self.birdeye_key}
-        async with self.session.get(bird_url, headers=headers) as response:
-            if response.status == 200:
-                data = await response.json()
-                if data.get('success') and data.get('data'):
-                    token = data['data']
-                    return {
-                        'name': token.get('name', 'Unknown'),
-                        'symbol': token.get('symbol', 'Unknown'),
-                        'price': float(token.get('price', 0)),
-                        'price_change': float(token.get('priceChange24h', 0)),
-                        'liquidity': float(token.get('liquidity', 0)),
-                        'volume_24h': float(token.get('volume24h', 0)),
-                        'mcap': float(token.get('marketCap', 0)),
-                        'pair_address': token_address,
-                        'created_at': 'Unknown',
-                        'logo': token.get('logoURI', ''),
-                        'dexes': [
-                            f"[BIRDEYE](https://birdeye.so/token/{token_address})",
-                            f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
-                            f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})"
-                        ]
-                    }
+            self.logger.error(f"No data found for token {token_address}")
+            return None
 
-        self.logger.warning(f"Could not fetch data for token {token_address}")
-        return None
+        except Exception as e:
+            self.logger.error(f"Error fetching token data: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return None
 
     def format_message(self, data):
         """Format token data for Discord message"""
@@ -254,51 +232,52 @@ class Solana(commands.Cog):
             return
 
         if message.content.startswith('$'):
-            symbol = message.content[1:].lower()  # Remove $ and convert to lowercase
-            self.logger.info(f"Received token symbol request: {symbol}")
+            symbol = message.content[1:].lower()
             
-            # Initialize session if not exists
-            if not self.session:
-                self.session = aiohttp.ClientSession()
-
-            # Check if symbol exists in our token addresses
             if symbol in self.token_addresses:
                 token_address = self.token_addresses[symbol]
                 try:
                     async with message.channel.typing():
-                        # Debug log
-                        self.logger.info(f"Fetching data for {symbol} ({token_address})")
-                        
-                        # Get token data
-                        token_data = await self.get_jupiter_data(token_address)
+                        token_data = await self.get_token_data(token_address)
                         
                         if token_data:
-                            # Debug log
-                            self.logger.info(f"Successfully fetched data: {token_data}")
-                            
-                            embed = discord.Embed(
-                                title=f"${token_data['symbol']} ({token_data['name']})",
-                                description=f"Token Address: `{token_address}`",
-                                color=discord.Color.blue()
+                            # Format the message
+                            description = (
+                                f"{token_data['name']} ({token_data['symbol']}/SOL)\n\n"
+                                f"💰 USD: ${token_data['price']:.10f}\n"
+                                f"💎 FDV: ${self.format_number(token_data['fdv'])}\n"
+                                f"💫 MC: ${self.format_number(token_data['mcap'])}\n"
+                                f"💧 Liq: ${self.format_number(token_data['liquidity'])}\n"
+                                f"📊 Vol: ${self.format_number(token_data['volume_24h'])} "
+                                f"🕒 Age: {format_time_ago(token_data['created_at'])}\n"
+                                f"📈 1H: {token_data['price_change_1h']}% • "
+                                f"4H: {token_data['price_change_4h']}% • "
+                                f"24H: {token_data['price_change_24h']}%\n\n"
+                                f"`{token_address}`\n\n"
+                                f"[DEX](https://dexscreener.com/solana/{token_data['pair_address']}) • "
+                                f"[BIRD](https://birdeye.so/token/{token_address}) • "
+                                f"[BLX](https://solscan.io/token/{token_address}) • "
+                                f"[SOL](https://solana.fm/address/{token_address}) • "
+                                f"[BNK](https://solanabeach.io/token/{token_address}) • "
+                                f"[JUP](https://jup.ag/swap/SOL-{token_address})"
                             )
-                            
-                            # Add fields
-                            embed.add_field(name="Price", value=f"${token_data['price']:.10f}", inline=True)
-                            embed.add_field(name="24h Change", value=f"{token_data['price_change']:.2f}%", inline=True)
-                            embed.add_field(name="Market Cap", value=f"${token_data['mcap']:,.2f}", inline=True)
-                            
-                            if token_data.get('top_pools'):
-                                embed.add_field(name="Top Pools", value="\n".join(token_data['top_pools']), inline=False)
-                            
-                            # Add links
-                            links = "\n".join(token_data['dexes'])
-                            embed.add_field(name="Links", value=links, inline=False)
-                            
-                            # Set thumbnail if logo exists
+
+                            # Create embed
+                            embed = discord.Embed(
+                                title=f"{token_data['symbol']}/SOL",
+                                description=description,
+                                color=discord.Color.green() if token_data['price_change_24h'] >= 0 else discord.Color.red()
+                            )
+
                             if token_data.get('logo'):
                                 embed.set_thumbnail(url=token_data['logo'])
-                            
+
                             await message.channel.send(embed=embed)
+
+                            # Format and send scan info
+                            scan_info = await self.format_scan_info(message, token_data, token_data['mcap'])
+                            if scan_info:
+                                await message.channel.send(scan_info)
                         else:
                             await message.channel.send(f"❌ Could not fetch data for ${symbol}")
                             
@@ -307,7 +286,7 @@ class Solana(commands.Cog):
                     self.logger.error(traceback.format_exc())
                     await message.channel.send(f"❌ Error processing ${symbol}")
             else:
-                if len(symbol) <= 10:  # Reasonable symbol length
+                if len(symbol) <= 10:
                     await message.channel.send(f"❌ Unknown token symbol: ${symbol}")
 
     @commands.command(name='ping')
