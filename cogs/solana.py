@@ -81,70 +81,51 @@ class Solana(commands.Cog):
         return True
 
     async def get_jupiter_data(self, token_address):
-        """Comprehensive Jupiter API data fetching"""
+        """Fetch token data from Jupiter"""
         try:
-            # Price and market data
-            price_url = f"https://price.jup.ag/v4/price?ids={token_address}&vsToken=So11111111111111111111111111111111111111112"
-            
-            # Token metadata
-            meta_url = "https://token.jup.ag/all"
-            
-            # Get top pools/routes
-            routes_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=1000000000&slippageBps=50"
-            
-            async with aiohttp.ClientSession() as session:
-                # Fetch price data
-                async with session.get(price_url) as price_response:
-                    if price_response.status != 200:
-                        return None
-                    price_data = await price_response.json()
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
+            # Basic price data
+            price_url = f"https://price.jup.ag/v4/price?ids={token_address}"
+            async with self.session.get(price_url) as response:
+                if response.status != 200:
+                    self.logger.error(f"Jupiter price API error: {await response.text()}")
+                    return None
                     
-                # Fetch metadata
-                async with session.get(meta_url) as meta_response:
+                price_data = await response.json()
+                if not price_data.get('data', {}).get(token_address):
+                    self.logger.error(f"No price data for {token_address}")
+                    return None
+
+                token_price = price_data['data'][token_address]
+                
+                # Get token metadata
+                meta_url = "https://token.jup.ag/all"
+                async with self.session.get(meta_url) as meta_response:
                     if meta_response.status != 200:
+                        self.logger.error(f"Jupiter metadata API error: {await meta_response.text()}")
                         return None
+                        
                     meta_data = await meta_response.json()
-                    
-                # Fetch routing data
-                async with session.get(routes_url) as routes_response:
-                    if routes_response.status != 200:
-                        return None
-                    routes_data = await routes_response.json()
-                    
-                # Process the data
-                token_price = price_data.get('data', {}).get(token_address, {})
-                token_meta = meta_data.get('tokens', {}).get(token_address, {})
-                routes = routes_data.get('data', [])
-                
-                # Get best pools from routes
-                pools = []
-                if routes:
-                    for market in routes[0].get('marketInfos', [])[:3]:  # Top 3 pools
-                        pools.append(f"{market.get('label', 'Unknown')} ({market.get('liquidity', '0')})")
-                
+                    token_meta = meta_data.get('tokens', {}).get(token_address, {})
+
                 return {
                     'name': token_meta.get('name', 'Unknown'),
                     'symbol': token_meta.get('symbol', 'Unknown'),
-                    'price': token_price.get('price', 0),
-                    'price_change': token_price.get('priceChange24h', 0),
-                    'liquidity': sum(float(market.get('liquidity', 0)) for market in routes[0].get('marketInfos', [])) if routes else 0,
-                    'volume_24h': token_price.get('volume24h', 0),
-                    'mcap': token_price.get('marketCap', 0),
-                    'pair_address': token_address,
-                    'created_at': 'Unknown',
+                    'price': float(token_price.get('price', 0)),
+                    'price_change': float(token_price.get('priceChange24h', 0)),
+                    'mcap': float(token_price.get('marketCap', 0)),
                     'logo': token_meta.get('logoURI', ''),
-                    'decimals': token_meta.get('decimals', 9),
-                    'top_pools': pools,
                     'dexes': [
                         f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
                         f"[BIRDEYE](https://birdeye.so/token/{token_address})",
-                        f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})",
-                        f"[SOLSCAN](https://solscan.io/token/{token_address})"
+                        f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})"
                     ]
                 }
-                
+
         except Exception as e:
-            self.logger.error(f"Jupiter API error: {str(e)}")
+            self.logger.error(f"Jupiter API error for {token_address}: {str(e)}")
             self.logger.error(traceback.format_exc())
             return None
 
@@ -272,35 +253,60 @@ class Solana(commands.Cog):
         if message.author.bot:
             return
 
-        # Check if message starts with $ and is a token symbol
         if message.content.startswith('$'):
             symbol = message.content[1:].lower()  # Remove $ and convert to lowercase
-            
-            # Debug logging
             self.logger.info(f"Received token symbol request: {symbol}")
             
+            # Initialize session if not exists
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
             # Check if symbol exists in our token addresses
             if symbol in self.token_addresses:
                 token_address = self.token_addresses[symbol]
                 try:
                     async with message.channel.typing():
-                        token_data = await self.get_token_data(token_address)
+                        # Debug log
+                        self.logger.info(f"Fetching data for {symbol} ({token_address})")
+                        
+                        # Get token data
+                        token_data = await self.get_jupiter_data(token_address)
+                        
                         if token_data:
-                            embed = self.create_token_embed(token_data, token_address)
-                            await message.channel.send(embed=embed)
+                            # Debug log
+                            self.logger.info(f"Successfully fetched data: {token_data}")
                             
-                            # Format and send scan info
-                            mcap = float(token_data.get('mcap', 0))
-                            scan_info = await self.format_scan_info(message, token_data, mcap)
-                            if scan_info:
-                                await message.channel.send(scan_info)
+                            embed = discord.Embed(
+                                title=f"${token_data['symbol']} ({token_data['name']})",
+                                description=f"Token Address: `{token_address}`",
+                                color=discord.Color.blue()
+                            )
+                            
+                            # Add fields
+                            embed.add_field(name="Price", value=f"${token_data['price']:.10f}", inline=True)
+                            embed.add_field(name="24h Change", value=f"{token_data['price_change']:.2f}%", inline=True)
+                            embed.add_field(name="Market Cap", value=f"${token_data['mcap']:,.2f}", inline=True)
+                            
+                            if token_data.get('top_pools'):
+                                embed.add_field(name="Top Pools", value="\n".join(token_data['top_pools']), inline=False)
+                            
+                            # Add links
+                            links = "\n".join(token_data['dexes'])
+                            embed.add_field(name="Links", value=links, inline=False)
+                            
+                            # Set thumbnail if logo exists
+                            if token_data.get('logo'):
+                                embed.set_thumbnail(url=token_data['logo'])
+                            
+                            await message.channel.send(embed=embed)
                         else:
                             await message.channel.send(f"❌ Could not fetch data for ${symbol}")
+                            
                 except Exception as e:
-                    self.logger.error(f"Error processing token symbol {symbol}: {str(e)}")
-                    await message.channel.send(f"❌ Error fetching data for ${symbol}")
+                    self.logger.error(f"Error processing {symbol}: {str(e)}")
+                    self.logger.error(traceback.format_exc())
+                    await message.channel.send(f"❌ Error processing ${symbol}")
             else:
-                # Only respond if it looks like a token request
                 if len(symbol) <= 10:  # Reasonable symbol length
                     await message.channel.send(f"❌ Unknown token symbol: ${symbol}")
 
