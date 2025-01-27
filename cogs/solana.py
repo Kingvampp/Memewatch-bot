@@ -59,15 +59,11 @@ class Solana(commands.Cog):
             await ctx.send("❌ An error occurred while scanning.")
 
     async def cog_load(self):
-        """Initialize aiohttp session with headers"""
-        headers = {
-            'User-Agent': 'MemeWatchBot/1.0',
-            'X-API-KEY': self.birdeye_key
-        }
-        self.session = aiohttp.ClientSession(headers=headers)
+        """Create aiohttp session when cog loads"""
+        self.session = aiohttp.ClientSession(headers={'User-Agent': 'Mozilla/5.0'})
         
     async def cog_unload(self):
-        """Cleanup session"""
+        """Close aiohttp session when cog unloads"""
         if self.session:
             await self.session.close()
             
@@ -132,17 +128,20 @@ class Solana(commands.Cog):
     async def get_jupiter_token_list(self):
         """Fetch complete Jupiter token list"""
         try:
-            if not self.session:
-                self.session = aiohttp.ClientSession()
-                
-            # Main token list
-            url = "https://token.jup.ag/strict"  # Strict list for verified tokens
-            async with self.session.get(url) as response:
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'application/json'
+            }
+            
+            url = "https://token.jup.ag/strict"
+            async with self.session.get(url, headers=headers) as response:
                 if response.status == 200:
                     return await response.json()
+                self.logger.error(f"Jupiter API returned status {response.status}")
+                return None
         except Exception as e:
             self.logger.error(f"Error fetching Jupiter token list: {str(e)}")
-        return None
+            return None
 
     async def get_jupiter_price_data(self, token_address):
         """Fetch comprehensive price data from Jupiter"""
@@ -447,8 +446,12 @@ class Solana(commands.Cog):
                     token_address = token_input
                 else:
                     # Try to get token info from Jupiter
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0',
+                        'Accept': 'application/json'
+                    }
                     meta_url = "https://token.jup.ag/all"
-                    async with self.session.get(meta_url) as response:
+                    async with self.session.get(meta_url, headers=headers) as response:
                         if response.status == 200:
                             tokens = await response.json()
                             # Search for token by symbol
@@ -465,51 +468,17 @@ class Solana(commands.Cog):
                 async with message.channel.typing():
                     token_data = await self.get_token_data(token_address)
                     if token_data:
-                        # Format the message
-                        description = (
-                            f"{token_data['name']} ({token_data['symbol']}/SOL)\n\n"
-                            f"💰 USD: ${token_data['price']:.10f}\n"
-                            f"💎 FDV: ${self.format_number(token_data['fdv'])}\n"
-                            f"💫 MC: ${self.format_number(token_data['mcap'])}\n"
-                            f"💧 Liq: ${self.format_number(token_data['liquidity'])}\n"
-                            f"📊 Vol: ${self.format_number(token_data['volume_24h'])} "
-                            f"🕒 Age: {format_time_ago(token_data['created_at'])}\n"
-                            f"📈 1H: {token_data['price_change_1h']}% • "
-                            f"24H: {token_data['price_change_24h']}%\n\n"
-                            f"`{token_address}`\n\n"
-                            f"[DEX](https://dexscreener.com/solana/{token_data['pair_address']}) • "
-                            f"[BIRD](https://birdeye.so/token/{token_address}) • "
-                            f"[BLX](https://solscan.io/token/{token_address}) • "
-                            f"[SOL](https://solana.fm/address/{token_address}) • "
-                            f"[BNK](https://solanabeach.io/token/{token_address}) • "
-                            f"[JUP](https://jup.ag/swap/SOL-{token_address})"
-                        )
-
-                        # Create embed
-                        embed = discord.Embed(
-                            title=f"{token_data['symbol']}/SOL",
-                            description=description,
-                            color=discord.Color.green() if token_data['price_change_24h'] >= 0 else discord.Color.red()
-                        )
-
-                        if token_data.get('logo'):
-                            embed.set_thumbnail(url=token_data['logo'])
-
-                        await message.channel.send(embed=embed)
-
-                        # Format and send scan info
-                        scan_info = await self.format_scan_info(message, token_data, token_data['mcap'])
-                        if scan_info:
-                            await message.channel.send(scan_info)
+                        embed = await self.format_token_embed(token_data)
+                        if embed:
+                            await message.channel.send(embed=embed)
+                        else:
+                            await message.channel.send(f"❌ Error formatting data for ${token_input}")
                     else:
                         await message.channel.send(f"❌ Could not fetch data for ${token_input}")
             except Exception as e:
                 self.logger.error(f"Error processing ${token_input}: {str(e)}")
                 self.logger.error(traceback.format_exc())
                 await message.channel.send(f"❌ Error processing ${token_input}")
-            else:
-                if len(token_input) <= 10:
-                    await message.channel.send(f"❌ Unknown token symbol: ${token_input}")
 
     @commands.command(name='ping')
     async def ping(self, ctx):

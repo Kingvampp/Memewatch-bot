@@ -46,10 +46,10 @@ class MemeWatchBot(commands.Bot):
         self.session = aiohttp.ClientSession()
         
         # Load cogs with better error handling
-        cogs = ['cogs.security', 'cogs.solana', 'cogs.analyzer']
+        cogs = ['solana']  # Remove analyzer cog temporarily
         for cog in cogs:
             try:
-                await self.load_extension(cog)
+                await self.load_extension(f'cogs.{cog}')
                 logger.info(f"Loaded {cog}")
             except Exception as e:
                 logger.error(f"Failed to load {cog}: {str(e)}")
