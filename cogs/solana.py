@@ -85,89 +85,124 @@ class Solana(commands.Cog):
     async def get_dexscreener_data(self, token_address):
         """Fetch data from DexScreener"""
         try:
-            url = f"{self.dexscreener_api}/pairs/solana/{token_address}"
-            headers = {
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0'
-            }
-            
-            async with self.session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    self.logger.error(f"DexScreener API error: {response.status}")
-                    return None
-                    
-                data = await response.json()
-                pairs = data.get('pairs', [])
-                
-                if not pairs:
-                    self.logger.warning(f"No pairs found for {token_address}")
-                    return None
-                
-                # Get the most liquid pair
-                pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
-                return pair
-                
+            url = f"{self.dexscreener_api}/tokens/{token_address}"
+            async with self.session.get(url, ssl=True) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('pairs') and len(data['pairs']) > 0:
+                        pair = data['pairs'][0]
+                        return {
+                            'name': pair['baseToken']['name'],
+                            'symbol': pair['baseToken']['symbol'],
+                            'price': float(pair['priceUsd']),
+                            'price_change_24h': float(pair['priceChange']['h24'] or 0),
+                            'liquidity': float(pair['liquidity']['usd']),
+                            'volume_24h': float(pair['volume']['h24']),
+                            'pair_address': pair['pairAddress'],
+                            'dex': pair['dexId']
+                        }
+                return None
         except Exception as e:
             self.logger.error(f"DexScreener API error: {str(e)}")
-            self.logger.error(traceback.format_exc())
             return None
 
-    async def get_birdeye_data(self, token_address):
-        """Fetch data from Birdeye"""
+    async def get_solscan_data(self, token_address):
+        """Fetch data from Solscan"""
         try:
-            url = f"{self.birdeye_api}/token/info?address={token_address}"
-            headers = {
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0'
-            }
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            meta_url = f"https://public-api.solscan.io/token/meta/{token_address}"
+            market_url = f"https://public-api.solscan.io/market/token/{token_address}"
             
-            async with self.session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    self.logger.error(f"Birdeye API error: {response.status}")
-                    return None
-                    
-                data = await response.json()
-                return data.get('data', {})
+            async with self.session.get(meta_url, headers=headers) as meta_response, \
+                      self.session.get(market_url, headers=headers) as market_response:
                 
+                if meta_response.status == 200 and market_response.status == 200:
+                    meta_data = await meta_response.json()
+                    market_data = await market_response.json()
+                    
+                    return {
+                        'name': meta_data.get('name'),
+                        'symbol': meta_data.get('symbol'),
+                        'price': float(market_data.get('priceUsdt', 0)),
+                        'volume_24h': float(market_data.get('volume24h', 0)),
+                        'mcap': float(market_data.get('marketCap', 0)),
+                        'holder_count': meta_data.get('holder'),
+                        'supply': meta_data.get('supply')
+                    }
+                return None
         except Exception as e:
-            self.logger.error(f"Birdeye API error: {str(e)}")
-            self.logger.error(traceback.format_exc())
+            self.logger.error(f"Solscan API error: {str(e)}")
+            return None
+
+    async def get_raydium_data(self, token_address):
+        """Fetch data from Raydium"""
+        try:
+            price_url = "https://api.raydium.io/v2/main/price"
+            tokens_url = "https://api.raydium.io/v2/sdk/token/raydium.mainnet.json"
+            
+            async with self.session.get(price_url) as price_response, \
+                      self.session.get(tokens_url) as tokens_response:
+                
+                if price_response.status == 200 and tokens_response.status == 200:
+                    price_data = await price_response.json()
+                    tokens_data = await tokens_response.json()
+                    
+                    token_info = tokens_data.get(token_address)
+                    price_info = price_data.get(token_address)
+                    
+                    if token_info and price_info:
+                        return {
+                            'name': token_info.get('name'),
+                            'symbol': token_info.get('symbol'),
+                            'price': float(price_info.get('price', 0)),
+                            'decimals': token_info.get('decimals')
+                        }
+                return None
+        except Exception as e:
+            self.logger.error(f"Raydium API error: {str(e)}")
             return None
 
     async def get_token_data(self, token_address):
-        """Fetch token data from Jupiter"""
+        """Fetch token data from multiple sources"""
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0',
-                'Accept': 'application/json'
-            }
+            # Try all APIs concurrently
+            jupiter_data, dex_data, solscan_data, raydium_data = await asyncio.gather(
+                self.get_jupiter_price_data(token_address),
+                self.get_dexscreener_data(token_address),
+                self.get_solscan_data(token_address),
+                self.get_raydium_data(token_address),
+                return_exceptions=True
+            )
+
+            # Combine data from all sources
+            combined_data = {}
             
-            # Fetch price data
-            price_url = f"https://price.jup.ag/v4/price?ids={token_address}"
-            self.logger.info(f"Fetching price from {price_url}")
+            # Prioritize Jupiter data
+            if isinstance(jupiter_data, dict):
+                combined_data.update(jupiter_data)
             
-            async with self.session.get(price_url, headers=headers, ssl=True) as response:
-                if response.status == 200:
-                    price_data = await response.json()
-                    
-                    if price_data.get('data', {}).get(token_address):
-                        token_price = price_data['data'][token_address]
-                        
-                        # Format the data
-                        return {
-                            'price': float(token_price.get('price', 0)),
-                            'price_change_24h': float(token_price.get('priceChange24h', 0)),
-                            'volume_24h': float(token_price.get('volume24h', 0)),
-                            'liquidity': float(token_price.get('liquidity', 0)),
-                            'mcap': float(token_price.get('marketCap', 0)),
-                            'pair_address': token_address
-                        }
-                
-                self.logger.error(f"Price API returned status {response.status}")
-                return None
-                
+            # Add DexScreener data if available
+            if isinstance(dex_data, dict):
+                for key, value in dex_data.items():
+                    if not combined_data.get(key):
+                        combined_data[key] = value
+            
+            # Add Solscan data if available
+            if isinstance(solscan_data, dict):
+                for key, value in solscan_data.items():
+                    if not combined_data.get(key):
+                        combined_data[key] = value
+            
+            # Add Raydium data if available
+            if isinstance(raydium_data, dict):
+                for key, value in raydium_data.items():
+                    if not combined_data.get(key):
+                        combined_data[key] = value
+
+            return combined_data if combined_data else None
+
         except Exception as e:
-            self.logger.error(f"Error fetching price data: {str(e)}")
+            self.logger.error(f"Error fetching token data: {str(e)}")
             self.logger.error(traceback.format_exc())
             return None
 
@@ -278,67 +313,6 @@ class Solana(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error fetching Jupiter pool data: {str(e)}")
         return None
-
-    async def get_token_data(self, token_address):
-        """Fetch comprehensive token data from Jupiter"""
-        try:
-            # Get all data concurrently
-            token_list, price_data, pool_data = await asyncio.gather(
-                self.get_jupiter_token_list(),
-                self.get_jupiter_price_data(token_address),
-                self.get_jupiter_pool_data(token_address)
-            )
-            
-            if not price_data or not price_data.get('price_data', {}).get('data', {}).get(token_address):
-                return None
-                
-            token_meta = token_list.get('tokens', {}).get(token_address, {}) if token_list else {}
-            price_info = price_data['price_data']['data'][token_address]
-            market_info = price_data['market_data']
-            
-            # Calculate total liquidity and volume
-            total_liquidity = sum(pool['liquidity'] for pool in pool_data) if pool_data else 0
-            total_volume = sum(pool['volume_24h'] for pool in pool_data) if pool_data else 0
-            total_fees = sum(pool['fee_24h'] for pool in pool_data) if pool_data else 0
-            
-            # Get top pools with detailed info
-            top_pools = pool_data[:3] if pool_data else []
-            pool_info = [
-                f"{pool['name']} (${self.format_number(pool['liquidity'])} - Vol: ${self.format_number(pool['volume_24h'])})"
-                for pool in top_pools
-            ]
-            
-            return {
-                'name': token_meta.get('name', 'Unknown'),
-                'symbol': token_meta.get('symbol', 'Unknown'),
-                'price': float(price_info.get('price', 0)),
-                'price_change_1h': float(market_info.get('price_change_percentage_1h', 0)),
-                'price_change_4h': float(market_info.get('price_change_percentage_4h', 0)),
-                'price_change_24h': float(market_info.get('price_change_percentage_24h', 0)),
-                'mcap': float(market_info.get('market_cap', 0)),
-                'fdv': float(market_info.get('fully_diluted_valuation', 0)),
-                'liquidity': total_liquidity,
-                'volume_24h': total_volume,
-                'fees_24h': total_fees,
-                'pair_address': token_address,
-                'logo': token_meta.get('logoURI', ''),
-                'created_at': market_info.get('created_at'),
-                'holders': market_info.get('holders', 'Unknown'),
-                'total_supply': market_info.get('total_supply', 'Unknown'),
-                'circulating_supply': market_info.get('circulating_supply', 'Unknown'),
-                'top_pools': pool_info,
-                'dexes': [
-                    f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
-                    f"[BIRDEYE](https://birdeye.so/token/{token_address})",
-                    f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})",
-                    f"[SOLSCAN](https://solscan.io/token/{token_address})"
-                ]
-            }
-
-        except Exception as e:
-            self.logger.error(f"Error in get_token_data: {str(e)}")
-            self.logger.error(traceback.format_exc())
-            return None
 
     async def format_token_embed(self, token_data):
         """Create a beautifully formatted embed for token data"""
