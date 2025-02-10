@@ -134,52 +134,40 @@ class Solana(commands.Cog):
             self.logger.error(traceback.format_exc())
             return None
 
-    async def get_jupiter_data(self, token_address):
+    async def get_token_data(self, token_address):
         """Fetch token data from Jupiter"""
         try:
-            if not self.session:
-                self.session = aiohttp.ClientSession()
-
-            # Basic price data
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'application/json'
+            }
+            
+            # Fetch price data
             price_url = f"https://price.jup.ag/v4/price?ids={token_address}"
-            async with self.session.get(price_url) as response:
-                if response.status != 200:
-                    self.logger.error(f"Jupiter price API error: {await response.text()}")
-                    return None
+            self.logger.info(f"Fetching price from {price_url}")
+            
+            async with self.session.get(price_url, headers=headers, ssl=True) as response:
+                if response.status == 200:
+                    price_data = await response.json()
                     
-                price_data = await response.json()
-                if not price_data.get('data', {}).get(token_address):
-                    self.logger.error(f"No price data for {token_address}")
-                    return None
-
-                token_price = price_data['data'][token_address]
-                
-                # Get token metadata
-                meta_url = "https://token.jup.ag/all"
-                async with self.session.get(meta_url) as meta_response:
-                    if meta_response.status != 200:
-                        self.logger.error(f"Jupiter metadata API error: {await meta_response.text()}")
-                        return None
+                    if price_data.get('data', {}).get(token_address):
+                        token_price = price_data['data'][token_address]
                         
-                    meta_data = await meta_response.json()
-                    token_meta = meta_data.get('tokens', {}).get(token_address, {})
-
-                return {
-                    'name': token_meta.get('name', 'Unknown'),
-                    'symbol': token_meta.get('symbol', 'Unknown'),
-                    'price': float(token_price.get('price', 0)),
-                    'price_change': float(token_price.get('priceChange24h', 0)),
-                    'mcap': float(token_price.get('marketCap', 0)),
-                    'logo': token_meta.get('logoURI', ''),
-                    'dexes': [
-                        f"[JUPITER](https://jup.ag/swap/SOL-{token_address})",
-                        f"[BIRDEYE](https://birdeye.so/token/{token_address})",
-                        f"[DEXSCREENER](https://dexscreener.com/solana/{token_address})"
-                    ]
-                }
-
+                        # Format the data
+                        return {
+                            'price': float(token_price.get('price', 0)),
+                            'price_change_24h': float(token_price.get('priceChange24h', 0)),
+                            'volume_24h': float(token_price.get('volume24h', 0)),
+                            'liquidity': float(token_price.get('liquidity', 0)),
+                            'mcap': float(token_price.get('marketCap', 0)),
+                            'pair_address': token_address
+                        }
+                
+                self.logger.error(f"Price API returned status {response.status}")
+                return None
+                
         except Exception as e:
-            self.logger.error(f"Jupiter API error for {token_address}: {str(e)}")
+            self.logger.error(f"Error fetching price data: {str(e)}")
             self.logger.error(traceback.format_exc())
             return None
 
@@ -517,47 +505,84 @@ class Solana(commands.Cog):
             self.logger.error(traceback.format_exc())
             await ctx.send("❌ An error occurred while processing your request")
 
+    async def get_token_address(self, symbol):
+        """Get token address from symbol"""
+        try:
+            # Known token addresses
+            known_tokens = {
+                'bonk': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+                'me': 'MEFNBXixkEbait3xn9bkm8WsJzXtVsaJEn4c8Sam21u',
+                'jup': 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+            }
+            
+            # Check known tokens first
+            if symbol in known_tokens:
+                return known_tokens[symbol]
+
+            # Try Jupiter API
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'application/json'
+            }
+            
+            # Try both APIs for redundancy
+            apis = [
+                "https://token.jup.ag/all",
+                "https://cache.jup.ag/tokens"
+            ]
+            
+            for api in apis:
+                try:
+                    async with self.session.get(api, headers=headers, timeout=10) as response:
+                        if response.status == 200:
+                            tokens = await response.json()
+                            for addr, info in tokens.get('tokens', {}).items():
+                                if info.get('symbol', '').lower() == symbol:
+                                    return addr
+                except Exception as e:
+                    self.logger.error(f"Error with {api}: {str(e)}")
+                    continue
+
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error in get_token_address: {str(e)}")
+            return None
+
     @commands.Cog.listener()
     async def on_message(self, message):
-        """Handle $ commands"""
+        """Handle $symbol messages"""
         if message.author.bot:
             return
 
-        if not message.content.startswith('$'):
-            return
-
-        # Extract token symbol/address from the message
-        token_id = message.content[1:].strip().lower()
-        if not token_id:
-            return
-
-        try:
-            # Get token address from known tokens or use input as address
-            token_address = self.token_addresses.get(token_id, token_id)
+        if message.content.startswith('$'):
+            token_input = message.content[1:].strip().lower()
+            self.logger.info(f"Processing token request: {token_input}")
             
-            async with message.channel.typing():
-                # Initialize session if not exists
-                if not self.session:
-                    self.session = aiohttp.ClientSession()
-                
-                # Get token data
-                token_data = await self.get_token_data(token_address)
-                
-                if not token_data:
-                    await message.channel.send(f"❌ Could not find token information for {token_id}")
-                    return
+            try:
+                async with message.channel.typing():
+                    # Get token info first
+                    token_info = await self.get_token_info(token_input)
                     
-                # Create and send embed
-                embed = await self.format_token_embed(token_data)
-                if embed:
-                    await message.channel.send(embed=embed)
-                else:
-                    await message.channel.send("❌ Error formatting token information")
-
-        except Exception as e:
-            self.logger.error(f"Error processing $ command: {str(e)}")
-            self.logger.error(traceback.format_exc())
-            await message.channel.send("❌ An error occurred while processing your request")
+                    if token_info:
+                        self.logger.info(f"Found token info: {token_info['address']}")
+                        token_data = await self.get_token_data(token_info['address'])
+                        
+                        if token_data:
+                            embed = await self.format_token_embed(token_data)
+                            if embed:
+                                await message.channel.send(embed=embed)
+                            else:
+                                await message.channel.send(f"❌ Error formatting data for ${token_input}")
+                        else:
+                            await message.channel.send(f"❌ Could not fetch price data for ${token_input}")
+                    else:
+                        await message.channel.send(f"❌ Could not find token information for {token_input}")
+                        
+            except Exception as e:
+                self.logger.error(f"Error processing token request: {str(e)}")
+                self.logger.error(traceback.format_exc())
+                await message.channel.send(f"❌ Error processing request for ${token_input}")
 
     @commands.command(name='ping')
     async def ping(self, ctx):
@@ -665,6 +690,38 @@ class Solana(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error formatting scan info: {str(e)}")
             return ""
+
+    async def get_token_info(self, symbol_or_address):
+        """Get token information from Jupiter"""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'application/json'
+            }
+            
+            # Try Jupiter token list API
+            url = "https://token.jup.ag/all"
+            self.logger.info(f"Fetching token list from {url}")
+            
+            async with self.session.get(url, headers=headers, ssl=True) as response:
+                if response.status == 200:
+                    tokens = await response.json()
+                    token_info = None
+                    
+                    # Search by address or symbol
+                    for addr, info in tokens.get('tokens', {}).items():
+                        if addr.lower() == symbol_or_address.lower() or info.get('symbol', '').lower() == symbol_or_address.lower():
+                            token_info = {'address': addr, **info}
+                            break
+                    
+                    return token_info
+                else:
+                    self.logger.error(f"Jupiter API returned status {response.status}")
+                    return None
+                    
+        except Exception as e:
+            self.logger.error(f"Error fetching token info: {str(e)}")
+            return None
 
 async def setup(bot):
     """Set up the Solana cog"""
