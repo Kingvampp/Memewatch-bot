@@ -30,7 +30,7 @@ class Solana(commands.Cog):
         # API keys
         self.birdeye_key = os.getenv('BIRDEYE_API_KEY')
         self.solscan_key = os.getenv('SOLSCAN_API_KEY')
-
+        
         # Common token addresses
         self.token_addresses = {
             'sol': 'So11111111111111111111111111111111111111112',
@@ -103,6 +103,7 @@ class Solana(commands.Cog):
                 
         except Exception as e:
             self.logger.error(f"DexScreener API error: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
 
     async def get_birdeye_data(self, token_address):
@@ -124,6 +125,7 @@ class Solana(commands.Cog):
                 
         except Exception as e:
             self.logger.error(f"Birdeye API error: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
 
     async def get_jupiter_data(self, token_address):
@@ -347,62 +349,41 @@ class Solana(commands.Cog):
     async def format_token_embed(self, token_data):
         """Create a beautifully formatted embed for token data"""
         try:
-            # Create main embed
+            # Create main embed with token name and symbol
             embed = discord.Embed(
                 title=f"{token_data['symbol']}/SOL • {token_data['name']}",
-                color=discord.Color.green() if token_data['price_change_24h'] >= 0 else discord.Color.red()
+                color=discord.Color.green() if token_data['price_change'] >= 0 else discord.Color.red()
             )
 
-            # Price and Market Stats
+            # Price Information
             price_info = (
-                f"💰 **Price:** ${token_data['price']:.10f}\n"
-                f"📊 **Changes:**\n"
-                f"• 1H: {token_data['price_change_1h']:+.2f}%\n"
-                f"• 4H: {token_data['price_change_4h']:+.2f}%\n"
-                f"• 24H: {token_data['price_change_24h']:+.2f}%\n"
+                f"💰 **Price:** ${self.format_price(token_data['price'])}\n"
+                f"📊 **24h Change:** {token_data['price_change']:+.2f}%\n"
             )
             embed.add_field(name="Price Information", value=price_info, inline=False)
 
             # Market Metrics
-            market_info = (
-                f"💫 **Market Cap:** ${self.format_number(token_data['mcap'])}\n"
-                f"💎 **FDV:** ${self.format_number(token_data['fdv'])}\n"
-                f"💦 **Liquidity:** ${self.format_number(token_data['liquidity'])}\n"
-                f"📈 **24h Volume:** ${self.format_number(token_data['volume_24h'])}\n"
-                f"💰 **24h Fees:** ${self.format_number(token_data['fees_24h'])}\n"
-            )
-            embed.add_field(name="Market Metrics", value=market_info, inline=False)
-
-            # Supply Information
-            supply_info = (
-                f"🔄 **Circulating:** {self.format_number(token_data['circulating_supply'])}\n"
-                f"📊 **Total:** {self.format_number(token_data['total_supply'])}\n"
-                f"👥 **Holders:** {token_data['holders']}\n"
-            )
-            embed.add_field(name="Supply Info", value=supply_info, inline=False)
-
-            # Top Pools
-            if token_data['top_pools']:
-                pools_info = "\n".join([
-                    f"• {pool}" for pool in token_data['top_pools']
-                ])
-                embed.add_field(name="🌊 Top Liquidity Pools", value=pools_info, inline=False)
+            if token_data.get('mcap'):
+                market_info = f"💫 **Market Cap:** ${self.format_number(token_data['mcap'])}\n"
+                embed.add_field(name="Market Metrics", value=market_info, inline=False)
 
             # Quick Links
-            links = "\n".join(token_data['dexes'])
-            embed.add_field(name="🔗 Quick Links", value=links, inline=False)
-
-            # Footer with address
-            embed.set_footer(text=f"Token: {token_data['pair_address']}")
+            if token_data.get('dexes'):
+                links = "\n".join(token_data['dexes'])
+                embed.add_field(name="🔗 Quick Links", value=links, inline=False)
 
             # Set thumbnail if logo exists
             if token_data.get('logo'):
                 embed.set_thumbnail(url=token_data['logo'])
 
+            # Footer with address
+            embed.set_footer(text=f"Token: {token_data['pair_address']}")
+
             return embed
 
         except Exception as e:
             self.logger.error(f"Error formatting embed: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
 
     def format_number(self, num):
@@ -494,42 +475,81 @@ class Solana(commands.Cog):
             self.logger.error(traceback.format_exc())
             return None
 
+    @commands.command(name='token')
+    async def token_command(self, ctx, token_id: str = None):
+        """Get token information"""
+        if not token_id:
+            await ctx.send("❌ Please provide a token symbol or address")
+            return
+            
+        try:
+            # Get token address from known tokens or use input as address
+            token_id = token_id.lower()
+            token_address = self.token_addresses.get(token_id, token_id)
+            
+            async with ctx.typing():
+                # Initialize session if not exists
+                if not self.session:
+                    self.session = aiohttp.ClientSession()
+                
+                # Get token data from Jupiter
+                token_data = await self.get_token_data(token_address)
+                
+                if not token_data:
+                    await ctx.send(f"❌ Could not find token information for {token_id}")
+                    return
+                    
+                # Create and send embed
+                embed = await self.format_token_embed(token_data)
+                if embed:
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send("❌ Error formatting token information")
+
+        except Exception as e:
+            self.logger.error(f"Error processing token command: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            await ctx.send("❌ An error occurred while processing your request")
+
     @commands.Cog.listener()
     async def on_message(self, message):
         """Handle $ commands"""
         if message.author.bot:
             return
-            
+
         if not message.content.startswith('$'):
             return
-            
+
+        # Extract token symbol/address from the message
         token_id = message.content[1:].strip().lower()
         if not token_id:
             return
-            
+
         try:
-            # Get token address
+            # Get token address from known tokens or use input as address
             token_address = self.token_addresses.get(token_id, token_id)
             
             async with message.channel.typing():
-                # Get data from DexScreener
-                dex_data = await self.get_dexscreener_data(token_address)
-                if not dex_data:
+                # Initialize session if not exists
+                if not self.session:
+                    self.session = aiohttp.ClientSession()
+                
+                # Get token data
+                token_data = await self.get_token_data(token_address)
+                
+                if not token_data:
                     await message.channel.send(f"❌ Could not find token information for {token_id}")
                     return
                     
-                # Get additional data from Birdeye
-                birdeye_data = await self.get_birdeye_data(token_address)
-                
                 # Create and send embed
-                embed = self.create_token_embed(dex_data, birdeye_data)
+                embed = await self.format_token_embed(token_data)
                 if embed:
                     await message.channel.send(embed=embed)
                 else:
                     await message.channel.send("❌ Error formatting token information")
-                    
+
         except Exception as e:
-            self.logger.error(f"Error processing token command: {str(e)}")
+            self.logger.error(f"Error processing $ command: {str(e)}")
             self.logger.error(traceback.format_exc())
             await message.channel.send("❌ An error occurred while processing your request")
 
@@ -603,6 +623,7 @@ class Solana(commands.Cog):
             
         except Exception as e:
             self.logger.error(f"Error creating embed: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return None
 
     def validate_token_address(self, address):
