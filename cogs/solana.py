@@ -25,7 +25,9 @@ class Solana(commands.Cog):
         self.logger = logging.getLogger('solana')
         self.session = None
         self.last_scan = {}
-        self.db = bot.db
+        
+        # Get db if available, otherwise None
+        self.db = getattr(bot, 'db', None)
         
         # API keys
         self.birdeye_key = os.getenv('BIRDEYE_API_KEY')
@@ -41,6 +43,9 @@ class Solana(commands.Cog):
             'ufd': 'UFDGgD31XVrEUpDQZXxGbqbW7EhxgMWHpxBhVoqGsqB',
             'me': 'MEFNBXixkEbait3xn9bkm8WsJzXtVsaJEn4c8Sam21u'  # Verified ME token address
         }
+
+        # Log initialization
+        self.logger.info("Solana cog initialized")
 
     @commands.command(name='test')
     async def test(self, ctx):
@@ -59,8 +64,9 @@ class Solana(commands.Cog):
             await ctx.send("❌ An error occurred while scanning.")
 
     async def cog_load(self):
-        """Initialize aiohttp session"""
-        self.session = aiohttp.ClientSession()
+        """Create aiohttp session when cog loads"""
+        self.session = aiohttp.ClientSession(headers={'User-Agent': 'Mozilla/5.0'})
+        self.logger.info("Solana cog session created")
         
     async def cog_unload(self):
         """Cleanup session"""
@@ -633,6 +639,10 @@ class Solana(commands.Cog):
     async def format_scan_info(self, ctx, token_data, mcap):
         """Format scan information for display"""
         try:
+            # Skip if no database available
+            if not self.db:
+                return ""
+                
             scan_info = await self.db.get_scan_info(token_data['pair_address'], str(ctx.guild.id))
             
             if not scan_info:
@@ -657,4 +667,11 @@ class Solana(commands.Cog):
             return ""
 
 async def setup(bot):
-    await bot.add_cog(Solana(bot))
+    """Set up the Solana cog"""
+    try:
+        cog = Solana(bot)
+        await bot.add_cog(cog)
+        cog.logger.info("Solana cog loaded successfully")
+    except Exception as e:
+        logging.error(f"Error loading Solana cog: {str(e)}")
+        logging.error(traceback.format_exc())

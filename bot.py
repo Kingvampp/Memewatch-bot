@@ -41,19 +41,25 @@ class MemeWatchBot(commands.Bot):
         
     async def setup_hook(self):
         """Load cogs and setup bot"""
-        self.session = aiohttp.ClientSession()
-        
-        # Load cogs with better error handling
-        cogs = ['cogs.solana', 'cogs.analyzer', 'cogs.security']
-        for cog in cogs:
-            try:
-                await self.load_extension(cog)
-                logger.info(f"Loaded {cog}")
-            except Exception as e:
-                logger.error(f"Failed to load {cog}: {str(e)}")
-                logger.error(traceback.format_exc())
-                
-        logger.info("Bot setup complete")
+        try:
+            self.session = aiohttp.ClientSession()
+            logger.info("Created aiohttp session")
+            
+            # Load cogs with better error handling
+            cogs = ['solana']
+            for cog in cogs:
+                try:
+                    logger.info(f"Attempting to load {cog}")
+                    await self.load_extension(f'cogs.{cog}')
+                    logger.info(f"Successfully loaded {cog}")
+                except Exception as e:
+                    logger.error(f"Failed to load {cog}: {str(e)}")
+                    logger.error(traceback.format_exc())
+            
+            logger.info("Bot setup complete")
+        except Exception as e:
+            logger.error(f"Error in setup_hook: {str(e)}")
+            logger.error(traceback.format_exc())
 
     async def close(self):
         """Cleanup on bot shutdown"""
@@ -67,14 +73,18 @@ class MemeWatchBot(commands.Bot):
         logger.info(f'Bot ID: {self.user.id}')
         logger.info(f'Discord.py Version: {discord.__version__}')
         
+        # Log loaded cogs
+        loaded_cogs = [cog for cog in self.cogs]
+        logger.info(f'Loaded cogs: {loaded_cogs}')
+        
+        # Log connected servers
+        for guild in self.guilds:
+            logger.info(f'Connected to server: {guild.name} (ID: {guild.id})')
+        
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching,
             name="memecoins 👀"
         ))
-        
-        # Log which servers the bot is in
-        for guild in self.guilds:
-            logger.info(f'Connected to server: {guild.name} (ID: {guild.id})')
 
     async def on_message(self, message):
         """Handle message events"""
