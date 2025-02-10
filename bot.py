@@ -36,6 +36,9 @@ class MemeWatchBot(commands.Bot):
         super().__init__(command_prefix=['$', '!'], intents=intents)
         self.session = None
         
+        # Placeholder for database initialization
+        self.db = None  # Replace with actual database initialization
+        
     async def setup_hook(self):
         """Load cogs and setup bot"""
         self.session = aiohttp.ClientSession()
